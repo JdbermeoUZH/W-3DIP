@@ -88,13 +88,17 @@ if __name__ == "__main__":
     simulated_vessels_dir = os.path.join("..", "..", "..", "data", "raw_data", "simulated_vessels")
     raw_data_dir = os.path.join(simulated_vessels_dir, "raw")
     nib_dataset = NibDataset(input_volume_dir=raw_data_dir, dtype=np.float32)
-    print(nib_dataset[0])
 
+    patch_size = (32, 32, 128)
+    num_patches_xyz = (10, 10, 5)
+
+    output_path = os.path.join("..", "..", "..", "data", "ground_truth", "simulated_vessels")
+    os.makedirs(output_path, exist_ok=True)
     nib_dataset.sample_patches_from_volume(
         idx=0,
-        patch_size_xyz=(300, 300, 30),
-        num_patches_xyz=(1, 1, 50),
-        patch_persist_dir=os.path.join(simulated_vessels_dir, "ground_truth_patches", "300x300x30")
+        patch_size_xyz=patch_size,
+        num_patches_xyz=num_patches_xyz,
+        patch_persist_dir=os.path.join(output_path, "patches", "x".join([str(size) for size in patch_size]))
     )
 
 
