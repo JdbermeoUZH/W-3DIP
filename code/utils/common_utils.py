@@ -1,6 +1,7 @@
 __author__ = 'gbredell'
 
 import torch
+from torch import nn
 import torchvision
 import cv2
 from PIL import Image
