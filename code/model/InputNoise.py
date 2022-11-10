@@ -54,3 +54,7 @@ class InputNoise(nn.Module):
 
     def forward(self):
         return self.input + self.reg_noise_std * torch.zeros(self.input.shape).type_as(self.input.data).normal_()
+
+    def to_cuda(self):
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self.input = self.input.to(device)
