@@ -67,15 +67,17 @@ if __name__ == '__main__':
     num_iter = 10000
     kernel_size_estimate = (5, 5, 10)
     save_frequency_schedule = [(1000, 250)] # [(50, 5), (1000, 50), (1000, 250)]
-    output_dir = os.path.join('..', '..', 'results', 'test_runs')
+    output_dir = os.path.join('..', '..', 'results', 'W3DIP', 'test_runs')
     os.makedirs(output_dir, exist_ok=True)
 
     # Load volume to fit
     blurred_patches_dir = os.path.join("..", "..", "data", "blurred_patches")
     blurred_patch_dir = os.path.join(blurred_patches_dir, "gaussian_sigmas_xyz_1.1_1.1_1.85_size_5_5_10")
     nib_dataset = NibDataset(input_volume_dir=blurred_patch_dir, dtype=np.float32)
-    target_blurred_patch = nib_dataset.__getitem__(1).to(device)
-    target_patch_filepath = nib_dataset.file_paths[1]
+    target_blurred_patch = nib_dataset.__getitem__(2).to(device)
+    target_patch_filepath = nib_dataset.file_paths[2]
+    #print(nib_dataset.file_paths)
+    print(os.path.basename(target_patch_filepath))
     print(target_blurred_patch.shape)
 
     # Only for debugging and understanding the mappings
@@ -127,6 +129,7 @@ if __name__ == '__main__':
         report_memory_usage(things_in_gpu="Model and Maps")
 
         # Backprop
+        L_MSE.backward()
         optimizer.step()
         scheduler.step(step)
         optimizer.zero_grad()

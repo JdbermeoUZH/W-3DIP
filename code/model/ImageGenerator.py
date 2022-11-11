@@ -97,18 +97,18 @@ class ImageGenerator(nn.Module):
 
         # Encoding part
         self.enc1 = _EncoderBlock3D(input_noise_num_channels, 64)
-        #self.enc2 = _EncoderBlock(64, 128)
+        self.enc2 = _EncoderBlock3D(64, 128)
         #self.enc3 = _EncoderBlock(128, 256)
         #self.enc4 = _EncoderBlock(256, 512, dropout=True)
 
         # Center
         #self.center = _DecoderBlock(512, 1024, 512)
-        self.center = _DecoderBlock3D(64, 128, 64, upsample_strategy=upsample_strategy)
+        self.center = _DecoderBlock3D(128, 256, 128, upsample_strategy=upsample_strategy)
 
         # Decoding blocks
         #self.dec4 = _DecoderBlock(1024, 512, 256)
         #self.dec3 = _DecoderBlock(512, 256, 128)
-        #self.dec2 = _DecoderBlock(256, 128, 64)
+        self.dec2 = _DecoderBlock3D(256, 128, 64, upsample_strategy=upsample_strategy)
         self.dec1 = _DecoderBlock3D(128, 64, None, upsample_strategy=None)
         self.final = nn.Conv3d(64, num_output_channels, kernel_size=1)
         initialize_weights(self)
@@ -116,17 +116,21 @@ class ImageGenerator(nn.Module):
     def forward(self):
         x = self.input()
         enc1 = self.enc1(x)
-        #enc2 = self.enc2(enc1)
+        enc2 = self.enc2(enc1)
         #enc3 = self.enc3(enc2)
         #enc4 = self.enc4(enc3)
         #center = self.center(enc4)
-        center = self.center(enc1)
+        center = self.center(enc2)
+        #print(f'x.shape: {x.shape}')
+        #print(f'enc1.shape: {enc1.shape}')
+        #print(f'enc2.shape: {enc2.shape}')
+        #print(f'center.shape: {center.shape}')
         #dec4 = self.dec4(torch.cat([center, F.interpolate(enc4, center.size()[2:], mode='bilinear', align_corners=True)], 1))
         #dec3 = self.dec3(torch.cat([dec4, F.interpolate(enc3, dec4.size()[2:], mode='bilinear', align_corners=True)], 1))
-        #dec2 = self.dec2(torch.cat([dec3, F.interpolate(enc2, dec3.size()[2:], mode='bilinear', align_corners=True)], 1))
+        dec2 = self.dec2(torch.cat([center, F.interpolate(enc2, center.size()[2:], mode='trilinear', align_corners=True)], 1))
         #dec1 = self.dec1(torch.cat([dec2, F.interpolate(enc1, dec2.size()[2:], mode='bilinear', align_corners=True)], 1))
         dec1 = self.dec1(
-            torch.cat([center, F.interpolate(enc1, center.size()[2:], mode='trilinear', align_corners=True)], 1))
+            torch.cat([dec2, F.interpolate(enc1, dec2.size()[2:], mode='trilinear', align_corners=True)], 1))
         final = self.final(dec1)
 
         return F.interpolate(final, x.size()[2:], mode='trilinear', align_corners=True)
