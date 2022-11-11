@@ -12,6 +12,7 @@ import nibabel as nib
 
 from dataset.NIB_Dataset import NibDataset
 from model.W3DIP import W3DIP
+from utils.common_utils import count_parameters
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 #warnings.filterwarnings("ignore")
@@ -64,10 +65,10 @@ def checkpoint_outputs(blurred_vol_estimate: Union[torch.cuda.FloatTensor, torch
 if __name__ == '__main__':
     # General params
     LR = 0.01
-    num_iter = 10000
+    num_iter = 3000
     kernel_size_estimate = (5, 5, 10)
-    save_frequency_schedule = [(1000, 250)] # [(50, 5), (1000, 50), (1000, 250)]
-    output_dir = os.path.join('..', '..', 'results', 'test_runs')
+    save_frequency_schedule = [(50, 25), (250, 100), (1000, 250), (2000, 500)]
+    output_dir = os.path.join('..', '..', 'results', 'test_runs', '64x64x128')
     os.makedirs(output_dir, exist_ok=True)
 
     # Load volume to fit
@@ -96,6 +97,9 @@ if __name__ == '__main__':
 
     # Report memory usage
     report_memory_usage(things_in_gpu="Model")
+
+    # Report model summary
+    count_parameters(w3dip)
 
     # Define Optimizer
     optimizer = torch.optim.Adam(
@@ -127,8 +131,9 @@ if __name__ == '__main__':
         report_memory_usage(things_in_gpu="Model and Maps")
 
         # Backprop
+        L_MSE.backward()
         optimizer.step()
-        scheduler.step(step)
+        scheduler.step()
         optimizer.zero_grad()
 
         # Store loss values
