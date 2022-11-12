@@ -15,7 +15,7 @@ class KernelGenerator(nn.Module):
             **kwargs,
     ):
         super(KernelGenerator, self).__init__()
-        self.input = InputNoise(
+        self.input_noise = InputNoise(
             spatial_size=(1, 1), num_channels=noise_input_size,
             reg_noise_std=0, **kwargs
         )
@@ -27,6 +27,11 @@ class KernelGenerator(nn.Module):
             nn.Softmax()
         ])
 
+        self.estimated_kernel_size = estimated_kernel_shape
+
     def forward(self):
-        x = self.input().squeeze_()
+        x = self.input_noise().squeeze_()
         return self.model(x)
+
+    def get_estimated_kernel_size(self):
+        return self.estimated_kernel_size

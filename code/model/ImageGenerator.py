@@ -1,4 +1,5 @@
-from typing import Optional, Union, Tuple
+from collections import OrderedDict
+from typing import Optional, Tuple
 
 import torch
 from torch import nn
@@ -44,7 +45,7 @@ class _ConvBlock3D(nn.Module):
 
 
 class _EncoderBlock3D(nn.Module):
-    def __init__(self, in_channels, out_channels, dropout_rate: Optional[float]=None):
+    def __init__(self, in_channels, out_channels, dropout_rate: Optional[float] = None):
         super(_EncoderBlock3D, self).__init__()
         layers = [
             _ConvBlock3D(in_channels=in_channels, out_channels=out_channels, kernel_size=3, dropout_rate=dropout_rate),
@@ -82,65 +83,126 @@ class _DecoderBlock3D(nn.Module):
 class ImageGenerator(nn.Module):
     def __init__(
             self,
-            num_output_channels,
-            input_noise_spatial_size: Union[int, Tuple[int, ...]],
-            input_noise_num_channels: int = 8,
-            input_noise_reg_noise_std: float = 0.001,
-            upsample_strategy: str = 'bilinear',
-            **kwargs,
+            num_output_channels: int,
+            output_spatial_size: Tuple[int, ...],
+            input_noise: InputNoise
     ):
         super(ImageGenerator, self).__init__()
-        self.input = InputNoise(
-            spatial_size=input_noise_spatial_size, num_channels=input_noise_num_channels,
-            reg_noise_std=input_noise_reg_noise_std, **kwargs
-        )
-
-        # Encoding part
-        self.enc1 = _EncoderBlock3D(input_noise_num_channels, 64)
-        #self.enc2 = _EncoderBlock(64, 128)
-        #self.enc3 = _EncoderBlock(128, 256)
-        #self.enc4 = _EncoderBlock(256, 512, dropout=True)
-
-        # Center
-        #self.center = _DecoderBlock(512, 1024, 512)
-        self.center = _DecoderBlock3D(64, 128, 64, upsample_strategy=upsample_strategy)
-
-        # Decoding blocks
-        #self.dec4 = _DecoderBlock(1024, 512, 256)
-        #self.dec3 = _DecoderBlock(512, 256, 128)
-        #self.dec2 = _DecoderBlock(256, 128, 64)
-        self.dec1 = _DecoderBlock3D(128, 64, None, upsample_strategy=None)
-        self.final = nn.Conv3d(64, num_output_channels, kernel_size=1)
-        initialize_weights(self)
+        self.input_noise = input_noise
+        self.num_output_channels = num_output_channels
+        self.output_spatial_size = output_spatial_size
 
     def forward(self):
         x = self.input()
-        enc1 = self.enc1(x)
-        #enc2 = self.enc2(enc1)
-        #enc3 = self.enc3(enc2)
-        #enc4 = self.enc4(enc3)
-        #center = self.center(enc4)
-        center = self.center(enc1)
-        #dec4 = self.dec4(torch.cat([center, F.interpolate(enc4, center.size()[2:], mode='bilinear', align_corners=True)], 1))
-        #dec3 = self.dec3(torch.cat([dec4, F.interpolate(enc3, dec4.size()[2:], mode='bilinear', align_corners=True)], 1))
-        #dec2 = self.dec2(torch.cat([dec3, F.interpolate(enc2, dec3.size()[2:], mode='bilinear', align_corners=True)], 1))
-        #dec1 = self.dec1(torch.cat([dec2, F.interpolate(enc1, dec2.size()[2:], mode='bilinear', align_corners=True)], 1))
-        dec1 = self.dec1(
-            torch.cat([center, F.interpolate(enc1, center.size()[2:], mode='trilinear', align_corners=True)], 1))
-        final = self.final(dec1)
+        return x
 
-        return F.interpolate(final, x.size()[2:], mode='trilinear', align_corners=True)
+    def test_forward_pass_dimensions(self):
+        assert self.forward().shape[-3:] == self.output_spatial_size
+        assert self.forward().shape[-4] == self.num_output_channels
+
+
+class ImageGeneratorInterCNN3D(ImageGenerator):
+    def __init__(
+            self,
+            num_output_channels: int,
+            output_spatial_size: Tuple[int, ...],
+            input_noise: InputNoise,
+            downsampling_output_channels: Tuple[int, ...],
+            center_layer_scale_num_channels: int = 2
+    ):
+        super(ImageGeneratorInterCNN3D, self).__init__(
+            num_output_channels=num_output_channels, output_spatial_size=output_spatial_size, input_noise=input_noise)
+
+        # In this model the output has the same spatial dimensions as the input
+        assert self.input_noise.get_spatial_size() == output_spatial_size
+        self.num_enc_layers = len(downsampling_output_channels)
+
+        layers = OrderedDict()
+
+        # Encoding part
+        prev_enc_layer_channels = self.input_noise.get_num_channels()
+        for i, out_channels in enumerate(downsampling_output_channels):
+            layers[f'enc{i + 1}'] = _EncoderBlock3D(prev_enc_layer_channels, out_channels)
+            prev_enc_layer_channels = out_channels
+
+        last_enc_out_channels = prev_enc_layer_channels
+
+        # Center
+        center_middle_channels = last_enc_out_channels * center_layer_scale_num_channels
+        center_out_channels = last_enc_out_channels
+        layers['center'] = _DecoderBlock3D(
+            last_enc_out_channels, center_middle_channels, center_out_channels,
+            upsample_strategy='transposed_conv'
+        )
+
+        # Decoding part
+        prev_out_enc_channels = None
+        for i, out_enc_channels in enumerate(downsampling_output_channels):
+            if i + 1 == 1:
+                # Last decoding layer does not upsample
+                layers[f'dec{i + 1}'] = _DecoderBlock3D(
+                    2 * out_enc_channels, out_enc_channels, prev_out_enc_channels, upsample_strategy=None)
+            else:
+                # Decoding layers that upsample
+                layers[f'dec{i + 1}'] = _DecoderBlock3D(
+                    2 * out_enc_channels, out_enc_channels, prev_out_enc_channels, upsample_strategy='transposed_conv')
+
+            prev_out_enc_channels = out_enc_channels
+
+        # Output head with 1x1 convolutions
+        last_dec_layer_out_channels = downsampling_output_channels[0]
+        layers['output'] = nn.Conv3d(last_dec_layer_out_channels, num_output_channels, kernel_size=1)
+
+        for layer_name, layer in layers.items():
+            self.add_module(layer_name, layer)
+
+    def forward(self):
+        mappings = {}
+
+        # Map encoding layers
+        current_input = self.input_noise()
+        # print(f'current_input: {current_input.shape}')
+        for level_i in range(1, self.num_enc_layers + 1):
+            enc_layer_i = self.get_submodule(f'enc{level_i}')
+            mappings[f'enc{level_i}'] = enc_layer_i(current_input)
+            current_input = mappings[f'enc{level_i}']
+            # print(f'enc{level_i}: {current_input.shape}')
+
+        # Map center layer
+        mappings[f'center'] = self.center(current_input)
+        # print(f'center: {mappings[f"center"].shape}')
+
+        # Map decoding layers
+        prev_dec_layer = mappings[f'center']
+
+        for level_i in reversed(list(range(1, self.num_enc_layers + 1))):
+            dec_layer_i = self.get_submodule(f'dec{level_i}')
+            prev_enc_layer = mappings[f'enc{level_i}']
+            mappings[f'dec{level_i}'] = dec_layer_i(torch.cat([
+                prev_dec_layer,
+                F.interpolate(prev_enc_layer, prev_dec_layer.size()[2:], mode='trilinear', align_corners=True)
+            ], 1)
+            )
+            prev_dec_layer = mappings[f'dec{level_i}']
+            # print(f'dec{level_i}: {prev_dec_layer.shape}')
+
+        final = self.output(prev_dec_layer)
+        # print(f'final: {final.shape}')
+
+        return F.interpolate(final, self.input_noise.get_spatial_size(), mode='trilinear', align_corners=True)
 
 
 if __name__ == '__main__':
     # Only for debugging and understanding the mappings
-    example_target_shape = (3, 64, 64, 128)
-    net = ImageGenerator(
+    example_target_shape = (3, 32, 32, 256)
+
+    intercnn3d = ImageGeneratorInterCNN3D(
         num_output_channels=example_target_shape[0],
-        input_noise_spatial_size=example_target_shape[1:],
-        upsample_strategy='transposed_conv'
+        output_spatial_size=example_target_shape[1:],
+        input_noise=InputNoise(spatial_size=example_target_shape[1: ], num_channels=8, method='noise'),
+        downsampling_output_channels=(64,)
     )
 
-    ex_output = torch.squeeze(net())
-
-    assert tuple(ex_output.shape) == example_target_shape
+    print(intercnn3d().shape)
+    intercnn3d.test_forward_pass_dimensions()
+    assert intercnn3d().shape[2:] == example_target_shape[1:]

@@ -51,6 +51,8 @@ class InputNoise(nn.Module):
 
         self.input = net_input
         self.reg_noise_std = reg_noise_std
+        self.num_channels = num_channels
+        self.spatial_size = spatial_size
 
     def forward(self):
         return self.input + self.reg_noise_std * torch.zeros(self.input.shape).type_as(self.input.data).normal_()
@@ -58,3 +60,9 @@ class InputNoise(nn.Module):
     def to_cuda(self):
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.input = self.input.to(device)
+
+    def get_num_channels(self):
+        return self.num_channels
+
+    def get_spatial_size(self):
+        return self.spatial_size
