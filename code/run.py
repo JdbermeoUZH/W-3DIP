@@ -11,31 +11,36 @@ from tqdm import tqdm
 import nibabel as nib
 
 from dataset.NIB_Dataset import NibDataset
+from model.InputNoise import InputNoise
 from model.W3DIP import W3DIP
+from model.ImageGenerator import ImageGeneratorInterCNN3D
+from model.KernelGenerator import KernelGenerator
+from utils.common_utils import count_parameters
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 #warnings.filterwarnings("ignore")
 
 
-def report_memory_usage(things_in_gpu: str, total_memory_threshold: float = 0.4):
+def report_memory_usage(things_in_gpu: str, total_memory_threshold: float = 0.4, print_anyways: bool = False):
     if 'cuda' in device.type:
         total_gpu_memory = torch.cuda.get_device_properties(0).total_memory
         reserved_gpu_memory = torch.cuda.memory_reserved(0)
         allocated_gpu_memory = torch.cuda.memory_allocated(0)
 
-        if allocated_gpu_memory / total_gpu_memory > total_memory_threshold:
+        if allocated_gpu_memory / total_gpu_memory > total_memory_threshold or print_anyways:
             print(f"Total memory available: {total_gpu_memory / 2**30: 0.3f}")
             print(f"Total memory reserved: {reserved_gpu_memory / 2 ** 30}")
-            print(f"{things_in_gpu} Occupies: {allocated_gpu_memory/ 2**30} GB."
+            print(f"{things_in_gpu} Occupies: "
+                  f"\n\t {allocated_gpu_memory/ 2**30: .04f} GB."
                   f"\n\t {torch.cuda.memory_allocated(0)/reserved_gpu_memory: 0.3f} % of reserved memory."
                   f"\n\t {torch.cuda.memory_allocated(0)/total_gpu_memory: 0.3f} % of total memory.")
     else:
         print("No GPU available")
 
 
-def store_volume_nii_gz(tensor: Union[torch.cuda.FloatTensor, torch.Tensor], volume_filename: str, output_dir:str):
+def store_volume_nii_gz(vol_array: np.ndarray, volume_filename: str, output_dir:str):
     nib_img = nib.Nifti1Image(
-        tensor.cpu().detach().numpy().astype(np.uint16),
+        vol_array.astype(np.uint16),
         np.eye(4)
     )
     nib.save(nib_img, os.path.join(output_dir, volume_filename))
@@ -51,23 +56,29 @@ def checkpoint_outputs(blurred_vol_estimate: Union[torch.cuda.FloatTensor, torch
     patch_filename = os.path.basename(target_patch_filepath)
 
     store_volume_nii_gz(
-        tensor=blurred_vol_estimate, volume_filename=f"blurred_vol_estimate__{patch_filename}",
+        vol_array=blurred_vol_estimate.cpu().detach().numpy(),
+        volume_filename=f"blurred_vol_estimate__{patch_filename}",
         output_dir=step_output_dir)
     store_volume_nii_gz(
-        tensor=sharpened_vol_estimate, volume_filename=f"sharpened_vol_estimate__{patch_filename}",
+        vol_array=sharpened_vol_estimate.cpu().detach().numpy(),
+        volume_filename=f"sharpened_vol_estimate__{patch_filename}",
         output_dir=step_output_dir)
+
+    kernel_estimate = kernel_estimate.cpu().detach().numpy()
+    kernel_estimate /= np.max(kernel_estimate)
     store_volume_nii_gz(
-        tensor=kernel_estimate, volume_filename=f"kernel_estimate__{patch_filename}",
+        vol_array=kernel_estimate,
+        volume_filename=f"kernel_estimate__{patch_filename}",
         output_dir=step_output_dir)
 
 
 if __name__ == '__main__':
     # General params
     LR = 0.01
-    num_iter = 10000
+    num_iter = 3000
     kernel_size_estimate = (5, 5, 10)
-    save_frequency_schedule = [(1000, 250)] # [(50, 5), (1000, 50), (1000, 250)]
-    output_dir = os.path.join('..', '..', 'results', 'W3DIP', 'test_runs')
+    save_frequency_schedule = [(50, 25), (250, 100), (1000, 250), (2000, 500)]
+    output_dir = os.path.join('..', '..', 'results', 'W3DIP', 'test_runs', '64x64x128')
     os.makedirs(output_dir, exist_ok=True)
 
     # Load volume to fit
@@ -76,20 +87,25 @@ if __name__ == '__main__':
     nib_dataset = NibDataset(input_volume_dir=blurred_patch_dir, dtype=np.float32)
     target_blurred_patch = nib_dataset.__getitem__(2).to(device)
     target_patch_filepath = nib_dataset.file_paths[2]
-    #print(nib_dataset.file_paths)
-    print(os.path.basename(target_patch_filepath))
+    target_patch_spatial_size = tuple(target_blurred_patch.size()[1:])
+    target_patch_num_channels = target_blurred_patch.size()[0]
     print(target_blurred_patch.shape)
 
     # Only for debugging and understanding the mappings
     w3dip = W3DIP(
-        img_gen_input_noise_spatial_size=tuple(target_blurred_patch.size()[1:]),
-        img_gen_output_channels=target_blurred_patch.size()[0],
-        img_gen_input_noise_num_channels=8,
-        img_gen_upsample_strategy='transposed_conv',
-        kernel_net_noise_input_size=200,
-        kernel_net_num_hidden=1000,
-        estimated_kernel_shape=kernel_size_estimate
+        image_gen=ImageGeneratorInterCNN3D(
+            num_output_channels=target_patch_num_channels,
+            output_spatial_size=target_patch_spatial_size,
+            input_noise=InputNoise(spatial_size=target_patch_spatial_size, num_channels=8, method='noise'),
+            downsampling_output_channels=(64,)
+        ),
+        kernel_gen=KernelGenerator(
+            noise_input_size=200,
+            num_hidden=1000,
+            estimated_kernel_shape=kernel_size_estimate
+        )
     )
+
     w3dip.input_noises_to_cuda()
     w3dip.to(device)
 
@@ -97,7 +113,10 @@ if __name__ == '__main__':
     mse = torch.nn.MSELoss().to(device)
 
     # Report memory usage
-    report_memory_usage(things_in_gpu="Model")
+    report_memory_usage(things_in_gpu="Model", print_anyways=True)
+
+    # Report model summary
+    count_parameters(w3dip)
 
     # Define Optimizer
     optimizer = torch.optim.Adam(
@@ -117,11 +136,7 @@ if __name__ == '__main__':
     save_freq_change, save_freq = save_frequency_schedule.pop(0)
     for step in tqdm(range(num_iter)):
         # Forward pass
-        out_x, out_k = w3dip()
-
-        # Get blurred estimate
-        out_k_m = out_k.view(-1, 1, *kernel_size_estimate)
-        out_y = nn.functional.conv3d(out_x, out_k_m, padding='same', bias=None)
+        out_x, out_k, out_y = w3dip()
 
         # Measure loss
         L_MSE = mse(out_y.squeeze_(), target_blurred_patch.squeeze_())
@@ -131,7 +146,7 @@ if __name__ == '__main__':
         # Backprop
         L_MSE.backward()
         optimizer.step()
-        scheduler.step(step)
+        scheduler.step()
         optimizer.zero_grad()
 
         # Store loss values
@@ -146,15 +161,22 @@ if __name__ == '__main__':
             save_freq_change, save_freq = save_frequency_schedule.pop(0)
 
         if step % save_freq == 0:
-            if step == 198:
-                print('hallo')
             checkpoint_outputs(
-                blurred_vol_estimate=out_y, sharpened_vol_estimate=out_x.squeeze_(), kernel_estimate=out_k_m.squeeze_(),
-                output_dir=output_dir, target_patch_filepath=target_patch_filepath
+                blurred_vol_estimate=out_y, sharpened_vol_estimate=out_x.squeeze_(), kernel_estimate=out_k.squeeze_(),
+                output_dir=output_dir, target_patch_filepath=f'step_{step}_{target_patch_filepath}'
             )
 
             # Store loss history
             pd.DataFrame(loss_history).to_csv(os.path.join(output_dir, 'loss_history.csv'))
+
+    # Log what happens at the last step
+    checkpoint_outputs(
+        blurred_vol_estimate=out_y, sharpened_vol_estimate=out_x.squeeze_(), kernel_estimate=out_k.squeeze_(),
+        output_dir=output_dir, target_patch_filepath=f'step_{step}_{target_patch_filepath}'
+    )
+
+    # Store loss history
+    pd.DataFrame(loss_history).to_csv(os.path.join(output_dir, 'loss_history.csv'))
 
     # Clean up
     torch.cuda.empty_cache()

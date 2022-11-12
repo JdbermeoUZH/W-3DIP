@@ -1,7 +1,7 @@
 __author__ = 'gbredell'
 
 import torch
-from torch import nn
+from prettytable import PrettyTable
 import torchvision
 import cv2
 from PIL import Image
@@ -9,6 +9,20 @@ import numpy as np
 
 import matplotlib.pyplot as plt
 import random
+
+
+def count_parameters(model):
+    table = PrettyTable(["Modules", "Parameters"])
+    total_params = 0
+    for name, parameter in model.named_parameters():
+        if not parameter.requires_grad: continue
+        params = parameter.numel()
+        table.add_row([name, params])
+        total_params += params
+    print(table)
+    print(f"Total Trainable Params: {total_params}")
+    return total_params
+
 
 
 def crop_image(img, d=32):
