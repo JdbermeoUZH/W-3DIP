@@ -38,9 +38,9 @@ def report_memory_usage(things_in_gpu: str, total_memory_threshold: float = 0.4,
         print("No GPU available")
 
 
-def store_volume_nii_gz(tensor: Union[torch.cuda.FloatTensor, torch.Tensor], volume_filename: str, output_dir:str):
+def store_volume_nii_gz(vol_array: np.ndarray, volume_filename: str, output_dir:str):
     nib_img = nib.Nifti1Image(
-        tensor.cpu().detach().numpy().astype(np.uint16),
+        vol_array.astype(np.uint16),
         np.eye(4)
     )
     nib.save(nib_img, os.path.join(output_dir, volume_filename))
@@ -56,13 +56,19 @@ def checkpoint_outputs(blurred_vol_estimate: Union[torch.cuda.FloatTensor, torch
     patch_filename = os.path.basename(target_patch_filepath)
 
     store_volume_nii_gz(
-        tensor=blurred_vol_estimate, volume_filename=f"blurred_vol_estimate__{patch_filename}",
+        vol_array=blurred_vol_estimate.cpu().detach().numpy(),
+        volume_filename=f"blurred_vol_estimate__{patch_filename}",
         output_dir=step_output_dir)
     store_volume_nii_gz(
-        tensor=sharpened_vol_estimate, volume_filename=f"sharpened_vol_estimate__{patch_filename}",
+        vol_array=sharpened_vol_estimate.cpu().detach().numpy(),
+        volume_filename=f"sharpened_vol_estimate__{patch_filename}",
         output_dir=step_output_dir)
+
+    kernel_estimate = kernel_estimate.cpu().detach().numpy()
+    kernel_estimate /= np.max(kernel_estimate)
     store_volume_nii_gz(
-        tensor=kernel_estimate, volume_filename=f"kernel_estimate__{patch_filename}",
+        vol_array=kernel_estimate,
+        volume_filename=f"kernel_estimate__{patch_filename}",
         output_dir=step_output_dir)
 
 
@@ -72,7 +78,7 @@ if __name__ == '__main__':
     num_iter = 3000
     kernel_size_estimate = (5, 5, 10)
     save_frequency_schedule = [(50, 25), (250, 100), (1000, 250), (2000, 500)]
-    output_dir = os.path.join('..', '..', 'results', 'test_runs', '64x64x128')
+    output_dir = os.path.join('..', '..', 'results', 'test_runs_2', '64x64x128')
     os.makedirs(output_dir, exist_ok=True)
 
     # Load volume to fit
