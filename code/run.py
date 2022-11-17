@@ -75,18 +75,18 @@ def checkpoint_outputs(blurred_vol_estimate: Union[torch.cuda.FloatTensor, torch
 if __name__ == '__main__':
     # General params
     LR = 0.01
-    num_iter = 3000
+    num_iter = 10000
     kernel_size_estimate = (5, 5, 10)
     save_frequency_schedule = [(50, 25), (250, 100), (1000, 250), (2000, 500)]
-    output_dir = os.path.join('..', '..', 'results', 'W3DIP', 'test_runs', '64x64x128')
+    output_dir = os.path.join('..', '..', 'results', 'W3DIP', 'interCNN3D', '1l_128', '64x64x128')
     os.makedirs(output_dir, exist_ok=True)
 
     # Load volume to fit
     blurred_patches_dir = os.path.join("..", "..", "data", "blurred_patches")
     blurred_patch_dir = os.path.join(blurred_patches_dir, "gaussian_sigmas_xyz_1.1_1.1_1.85_size_5_5_10")
     nib_dataset = NibDataset(input_volume_dir=blurred_patch_dir, dtype=np.float32)
-    target_blurred_patch = nib_dataset.__getitem__(2).to(device)
-    target_patch_filepath = nib_dataset.file_paths[2]
+    target_blurred_patch = nib_dataset.__getitem__(1).to(device)
+    target_patch_filepath = nib_dataset.file_paths[1]
     target_patch_spatial_size = tuple(target_blurred_patch.size()[1:])
     target_patch_num_channels = target_blurred_patch.size()[0]
     print(target_blurred_patch.shape)
@@ -97,7 +97,7 @@ if __name__ == '__main__':
             num_output_channels=target_patch_num_channels,
             output_spatial_size=target_patch_spatial_size,
             input_noise=InputNoise(spatial_size=target_patch_spatial_size, num_channels=8, method='noise'),
-            downsampling_output_channels=(64,)
+            downsampling_output_channels=(128,)
         ),
         kernel_gen=KernelGenerator(
             noise_input_size=200,
