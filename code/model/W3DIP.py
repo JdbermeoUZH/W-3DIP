@@ -1,9 +1,14 @@
 from typing import Union, Tuple
 
+import torch
 from torch import nn
 
 from model.KernelGenerator import KernelGenerator
 from model.ImageGenerator import ImageGenerator
+
+
+def l2_regularization(tensor):
+    return torch.sum(tensor ** 2)
 
 
 class W3DIP(nn.Module):
