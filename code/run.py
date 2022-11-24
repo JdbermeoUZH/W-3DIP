@@ -77,7 +77,7 @@ if __name__ == '__main__':
     wk = 1
     interCNN_feature_maps = (16, 32)
     output_dir = os.path.join(
-        '..', '..', 'results', 'test_runs_4', '64x64x128',
+        '..', '..', 'results', 'avoid_identity_kernel', '64x64x128_vol',
         f'{len(interCNN_feature_maps)}L_' + '_'.join([str(feat_map) for feat_map in interCNN_feature_maps]),
         f'wk_{wk}'
     )
@@ -85,7 +85,7 @@ if __name__ == '__main__':
     os.makedirs(output_dir, exist_ok=True)
 
     # Load volume to fit
-    vol_idx = 1
+    vol_idx = 2
     blurred_patches_dir = os.path.join("..", "..", "data", "blurred_patches")
     blurred_patch_dir = os.path.join(blurred_patches_dir, "gaussian_sigmas_xyz_1.1_1.1_1.85_size_5_5_10")
     nib_dataset = NibDataset(input_volume_dir=blurred_patch_dir, dtype=np.float32)
