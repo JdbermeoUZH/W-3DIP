@@ -19,7 +19,6 @@ from utils.common_utils import count_parameters
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-
 # warnings.filterwarnings("ignore")
 
 
@@ -41,10 +40,7 @@ def report_memory_usage(things_in_gpu: str, total_memory_threshold: float = 0.4,
 
 
 def store_volume_nii_gz(vol_array: np.ndarray, volume_filename: str, output_dir: str):
-    nib_img = nib.Nifti1Image(
-        vol_array.astype(np.uint16),
-        np.eye(4)
-    )
+    nib_img = nib.Nifti1Image(vol_array, np.eye(4))
     nib.save(nib_img, os.path.join(output_dir, volume_filename))
 
 
@@ -75,7 +71,7 @@ def checkpoint_outputs(blurred_vol_estimate: Union[torch.cuda.FloatTensor, torch
 if __name__ == '__main__':
     # General params
     LR = 0.01
-    num_iter = 10000
+    num_iter = 3000
     kernel_size_estimate = (5, 5, 10)
     save_frequency_schedule = [(50, 25), (250, 100), (1000, 250), (2000, 500)]
     wk = 1
