@@ -19,7 +19,6 @@ from utils.common_utils import count_parameters
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-
 # warnings.filterwarnings("ignore")
 
 
