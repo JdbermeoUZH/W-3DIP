@@ -9,6 +9,7 @@ import torch
 from torch.optim.lr_scheduler import MultiStepLR
 from tqdm import tqdm
 import nibabel as nib
+from pytorch_msssim import SSIM, MS_SSIM
 
 from dataset.NIB_Dataset import NibDataset
 from model.InputNoise import InputNoise
@@ -134,7 +135,7 @@ if __name__ == '__main__':
 
     # Losses
     mse = torch.nn.MSELoss().to(device)
-    ssim = SSIM3D().to(device)
+    ssim = SSIM(size_average=True, channel=1, spatial_dims=3).to(device)
 
     # Report memory usage
     report_memory_usage(things_in_gpu="Model", print_anyways=True)
