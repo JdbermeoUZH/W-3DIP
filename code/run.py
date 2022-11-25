@@ -166,7 +166,7 @@ if __name__ == '__main__':
         l2_reg = wk * l2_regularization(out_k)
 
         data_fitting_term = mse(out_y.squeeze_(), target_blurred_patch.squeeze_()) if step < mse_to_ssim_step else \
-            1 - ssim(out_y.squeeze_(), target_blurred_patch.squeeze_())
+            1 - ssim(out_y, target_blurred_patch.reshape([1, 1] + list(target_blurred_patch.shape)))
 
         loss = l2_reg + data_fitting_term
         report_memory_usage(things_in_gpu="Model and Maps")
