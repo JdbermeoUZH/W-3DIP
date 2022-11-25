@@ -16,6 +16,7 @@ from model.W3DIP import W3DIP, l2_regularization
 from model.ImageGenerator import ImageGeneratorInterCNN3D
 from model.KernelGenerator import KernelGenerator
 from utils.common_utils import count_parameters, report_memory_usage
+from utils.SSIM import SSIM3D
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -122,8 +123,8 @@ if __name__ == '__main__':
             downsampling_output_channels=interCNN_feature_maps
         ),
         kernel_gen=KernelGenerator(
-            noise_input_size=200,
-            num_hidden=1000,
+            noise_input_size=kernel_generator_cfg['net_noise_input_size'],
+            num_hidden=kernel_generator_cfg['num_hidden_units'],
             estimated_kernel_shape=kernel_size_estimate
         )
     )
@@ -133,6 +134,7 @@ if __name__ == '__main__':
 
     # Losses
     mse = torch.nn.MSELoss().to(device)
+    ssim = SSIM3D().to(device)
 
     # Report memory usage
     report_memory_usage(things_in_gpu="Model", print_anyways=True)
@@ -162,18 +164,21 @@ if __name__ == '__main__':
 
         # Measure loss
         l2_reg = wk * l2_regularization(out_k)
-        L_MSE = mse(out_y.squeeze_(), target_blurred_patch.squeeze_()) + l2_reg
 
+        data_fitting_term = mse(out_y.squeeze_(), target_blurred_patch.squeeze_()) if step < mse_to_ssim_step else \
+            1 - ssim(out_y.squeeze_(), target_blurred_patch.squeeze_())
+
+        loss = l2_reg + data_fitting_term
         report_memory_usage(things_in_gpu="Model and Maps")
 
         # Backprop
-        L_MSE.backward()
+        loss.backward()
         optimizer.step()
         scheduler.step()
         optimizer.zero_grad()
 
         # Store loss values
-        loss_history['total'].append(L_MSE.item())
+        loss_history['total'].append(loss.item())
         loss_history['data_fitting_term'].append(0)
         loss_history['wiener_term'].append(0)
         loss_history['gen_kernel_similarity_to_init_kernel'].append(0)

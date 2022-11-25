@@ -8,7 +8,7 @@ model_definition:
     feature_maps: [16, 32]
 
   kernel_generator:
-    kernel_estimated_size: (5, 5, 10)
+    kernel_estimated_size: [5, 5, 10]
     net_noise_input_size: 2000
     num_hidden_units: 1000
 
