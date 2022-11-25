@@ -1,11 +1,11 @@
 import os
-import warnings
-from typing import Union, Tuple, List
+import yaml
+import argparse
+from typing import Union, Tuple
 
 import pandas as pd
 import numpy as np
 import torch
-from torch import nn
 from torch.optim.lr_scheduler import MultiStepLR
 from tqdm import tqdm
 import nibabel as nib
@@ -15,28 +15,28 @@ from model.InputNoise import InputNoise
 from model.W3DIP import W3DIP, l2_regularization
 from model.ImageGenerator import ImageGeneratorInterCNN3D
 from model.KernelGenerator import KernelGenerator
-from utils.common_utils import count_parameters
+from utils.common_utils import count_parameters, report_memory_usage
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 # warnings.filterwarnings("ignore")
 
 
-def report_memory_usage(things_in_gpu: str, total_memory_threshold: float = 0.4, print_anyways: bool = False):
-    if 'cuda' in device.type:
-        total_gpu_memory = torch.cuda.get_device_properties(0).total_memory
-        reserved_gpu_memory = torch.cuda.memory_reserved(0)
-        allocated_gpu_memory = torch.cuda.memory_allocated(0)
+def parse_arguments_and_load_config_file() -> Tuple[argparse.Namespace, dict]:
+    parser = argparse.ArgumentParser(description='Subtask-2')
+    parser.add_argument('--config_path_yaml', type=str,
+                        help='Path to YAML configuration file overall benchmarking parameters')
+    arguments = parser.parse_args()
 
-        if allocated_gpu_memory / total_gpu_memory > total_memory_threshold or print_anyways:
-            print(f"Total memory available: {total_gpu_memory / 2 ** 30: 0.3f}")
-            print(f"Total memory reserved: {reserved_gpu_memory / 2 ** 30}")
-            print(f"{things_in_gpu} Occupies: "
-                  f"\n\t {allocated_gpu_memory / 2 ** 30: .04f} GB."
-                  f"\n\t {torch.cuda.memory_allocated(0) / reserved_gpu_memory: 0.3f} % of reserved memory."
-                  f"\n\t {torch.cuda.memory_allocated(0) / total_gpu_memory: 0.3f} % of total memory.")
-    else:
-        print("No GPU available")
+    # Load parameters of configuration file
+    with open(arguments.config_path_yaml, "r") as stream:
+        try:
+            yaml_config_params = yaml.safe_load(stream)
+        except yaml.YAMLError as exc:
+            print(exc)
+            raise exc
+
+    return arguments, yaml_config_params
 
 
 def store_volume_nii_gz(vol_array: np.ndarray, volume_filename: str, output_dir: str):
@@ -55,6 +55,7 @@ def checkpoint_outputs(blurred_vol_estimate: Union[torch.cuda.FloatTensor, torch
         vol_array=blurred_vol_estimate.cpu().detach().numpy(),
         volume_filename=f"blurred_vol_estimate__{patch_filename}",
         output_dir=step_output_dir)
+
     store_volume_nii_gz(
         vol_array=sharpened_vol_estimate.cpu().detach().numpy(),
         volume_filename=f"sharpened_vol_estimate__{patch_filename}",
@@ -69,20 +70,24 @@ def checkpoint_outputs(blurred_vol_estimate: Union[torch.cuda.FloatTensor, torch
 
 
 if __name__ == '__main__':
-    # General params
-    LR = 0.01
-    num_iter = 3000
-    kernel_size_estimate = (5, 5, 10)
-    save_frequency_schedule = [(50, 25), (250, 100), (1000, 250), (2000, 500)]
-    wk = 1
-    interCNN_feature_maps = (16, 32)
-    output_dir = os.path.join(
-        '..', '..', 'results', 'avoid_identity_kernel', '64x64x128_vol',
-        f'{len(interCNN_feature_maps)}L_' + '_'.join([str(feat_map) for feat_map in interCNN_feature_maps]),
-        f'wk_{wk}'
-    )
 
-    os.makedirs(output_dir, exist_ok=True)
+    args, config_args = parse_arguments_and_load_config_file()
+    input_cfg = config_args['input']
+    img_generator_cfg = config_args['model_definition']['image_generator']
+    kernel_generator_cfg = config_args['model_definition']['kernel_generator']
+    train_cfg = config_args['training']
+    outputs_cfg = config_args['output']
+
+    # General params
+    LR = train_cfg['lr']
+    num_iter = train_cfg['steps']
+    mse_to_ssim_step = train_cfg['mse_to_ssim_step']
+    wk = train_cfg['loss_fn']['wk']
+
+    kernel_size_estimate = tuple(kernel_generator_cfg['kernel_estimated_size'])
+    interCNN_feature_maps = tuple(img_generator_cfg['feature_maps'])
+
+    save_frequency_schedule = outputs_cfg['checkpoint_frequencies']
 
     # Load volume to fit
     vol_idx = 2
@@ -97,7 +102,18 @@ if __name__ == '__main__':
     print(target_patch_filepath)
     print(target_blurred_patch.shape)
 
-    # Only for debugging and understanding the mappings
+    # Create dir where the results will be stored
+    base_output_dir = os.path.join(*outputs_cfg['dir'])
+    output_dir = os.path.join(
+        base_output_dir,
+        f"{'x'.join(str(shape) for shape in target_patch_spatial_size)}_vol",
+        f'{len(interCNN_feature_maps)}L_' + '_'.join([str(feat_map) for feat_map in interCNN_feature_maps]),
+        f'wk_{wk}'
+    )
+
+    os.makedirs(output_dir, exist_ok=True)
+
+    # Define model
     w3dip = W3DIP(
         image_gen=ImageGeneratorInterCNN3D(
             num_output_channels=target_patch_num_channels,

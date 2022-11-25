@@ -313,3 +313,22 @@ def readimg(path_to_image):
     y, cr, cb = cv2.split(x)
 
     return img, y, cb, cr
+
+
+def report_memory_usage(things_in_gpu: str, total_memory_threshold: float = 0.4, print_anyways: bool = False):
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+    if 'cuda' in device.type:
+        total_gpu_memory = torch.cuda.get_device_properties(0).total_memory
+        reserved_gpu_memory = torch.cuda.memory_reserved(0)
+        allocated_gpu_memory = torch.cuda.memory_allocated(0)
+
+        if allocated_gpu_memory / total_gpu_memory > total_memory_threshold or print_anyways:
+            print(f"Total memory available: {total_gpu_memory / 2 ** 30: 0.3f}")
+            print(f"Total memory reserved: {reserved_gpu_memory / 2 ** 30}")
+            print(f"{things_in_gpu} Occupies: "
+                  f"\n\t {allocated_gpu_memory / 2 ** 30: .04f} GB."
+                  f"\n\t {torch.cuda.memory_allocated(0) / reserved_gpu_memory: 0.3f} % of reserved memory."
+                  f"\n\t {torch.cuda.memory_allocated(0) / total_gpu_memory: 0.3f} % of total memory.")
+    else:
+        print("No GPU available")

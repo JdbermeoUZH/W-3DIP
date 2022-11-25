@@ -1,0 +1,25 @@
+input:
+  vol_idx: 2
+  volume_dir: ["..", "..", "data", "blurred_patches", "gaussian_sigmas_xyz_1.1_1.1_1.85_size_5_5_10"]
+
+
+model_definition:
+  image_generator:
+    feature_maps: [16, 32]
+
+  kernel_generator:
+    kernel_estimated_size: (5, 5, 10)
+    net_noise_input_size: 2000
+    num_hidden_units: 1000
+
+training:
+  lr: 0.01
+  steps: 10000
+  mse_to_ssim_step: 2000
+
+  loss_fn:
+    wk: 0.001
+
+output:
+  dir: ['..', '..', 'results', 'add_ssim']
+  checkpoint_frequencies: [[50, 25], [250, 100], [1000, 250], [2000, 500]]
