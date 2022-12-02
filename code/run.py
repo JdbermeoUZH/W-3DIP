@@ -141,7 +141,7 @@ if __name__ == '__main__':
 
     # Losses
     mse = torch.nn.MSELoss().to(device)
-    ssim = SSIM(size_average=True, channel=1, spatial_dims=3).to(device)
+    ssim = MS_SSIM(size_average=True, channel=1, spatial_dims=3, win_size=7).to(device)
 
     # Report memory usage
     report_memory_usage(things_in_gpu="Model", print_anyways=True)
