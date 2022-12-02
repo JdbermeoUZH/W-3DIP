@@ -10,6 +10,35 @@ from torch.utils.data import Dataset
 from utils.common_utils import np_to_torch
 
 
+def _create_segmentation_mask(
+        kernel: np.ndarray,
+        threshold_ranges: Tuple[int, ...] = (1e-5, 1e-4, 1e-3, 1e-2, 0.1, 0.25, 0.5)
+):
+    # Return a dictionary with the different segmentation masks that are non-empty
+    seg_masks_dict = {}
+    for threshold_range in threshold_ranges:
+        seg_mask_i = (kernel > threshold_range).astype(np.uint16)
+        if seg_mask_i.sum() > 0:
+            seg_masks_dict[threshold_range] = seg_mask_i
+
+    return seg_masks_dict
+
+
+def create_segmentation_masks_kernel(kernel_nib_filepath: str):
+    if os.path.exists(kernel_nib_filepath):
+        kernel_array = nib.load(kernel_nib_filepath)
+
+        kernel_segmentations = _create_segmentation_mask(kernel_array)
+
+        dir_to_store = os.path.dirname(kernel_nib_filepath)
+
+        for threshold, seg_mask in kernel_segmentations.items():
+            nib.save(
+                seg_mask,
+                os.path.join(dir_to_store, f'kernel_segmentation_mask_thres_{threshold}..nii.gz')
+            )
+
+
 class NibDataset(Dataset):
     def __init__(
             self,
