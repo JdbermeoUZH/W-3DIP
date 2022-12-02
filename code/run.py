@@ -69,6 +69,11 @@ def checkpoint_outputs(blurred_vol_estimate: Union[torch.cuda.FloatTensor, torch
         volume_filename=f"kernel_estimate__{patch_filename}",
         output_dir=step_output_dir)
 
+    store_volume_nii_gz(
+        vol_array=(kernel_estimate > 0.1).astype(np.uint8),
+        volume_filename=f"kernel_estimate_seg_mask_0.1_threshold__{patch_filename}",
+        output_dir=step_output_dir)
+
 
 if __name__ == '__main__':
 
@@ -102,6 +107,7 @@ if __name__ == '__main__':
     target_patch_num_channels = target_blurred_patch.size()[0]
     print(target_patch_filepath)
     print(target_blurred_patch.shape)
+    print(f"Unet structure: {interCNN_feature_maps}")
 
     # Create dir where the results will be stored
     base_output_dir = os.path.join(*outputs_cfg['dir'])
