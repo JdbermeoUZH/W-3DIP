@@ -66,7 +66,7 @@ class Blur3DKernel:
 
     def create_dumbbell_kernel_z(
             self,
-            lobe_center_frac: float = 3/4,
+            lobe_center_frac: float = 4/5,
             plot_kernel: bool = False,
             persist_dir: str = None
     ) -> np.ndarray:
@@ -75,10 +75,10 @@ class Blur3DKernel:
         xyz = np.column_stack([x.flat, y.flat, z.flat])
 
         lobe_center = lobe_center_frac * self.shape[2]/2
-        lobes_scale_xy, lobes_scale_z = (1/3) * self.shape[1]/2, (1/3) * (1/2) * (self.shape[2]/2 - lobe_center)
+        lobes_scale_xy, lobes_scale_z = (1/2) * self.shape[1]/2, (1/3) * (self.shape[2]/2 - lobe_center)
         lobes_covariance = np.diag(np.array([lobes_scale_xy, lobes_scale_xy, lobes_scale_z]) ** 2)
 
-        center_scale_xy, center_scale_z = (1/10) * self.shape[1]/2, (1/3) * lobe_center
+        center_scale_xy, center_scale_z = (1/5) * self.shape[1]/2, (1/3) * lobe_center
         center_covariance = np.diag(np.array([center_scale_xy, center_scale_xy, center_scale_z]) ** 2)
 
         lobe_1 = multivariate_normal.pdf(xyz, mean=(0, 0, lobe_center), cov=lobes_covariance)
@@ -112,11 +112,11 @@ if __name__ == "__main__":
     kernel_size = (5, 5, 10)
     sigma_xyz_ = (0.75, 0.75, 2.0)
     test_kernel = Blur3DKernel(kernel_dims_xyz=kernel_size)
-    gaussian_kernel = test_kernel.create_gaussian_kernel(
-        plot_kernel=True,
-        sigma_xyz=None,#sigma_xyz_,
-        persist_dir=kernel_dir
-    )
+    #gaussian_kernel = test_kernel.create_gaussian_kernel(
+    #    plot_kernel=True,
+    #    sigma_xyz=None,#sigma_xyz_,
+    #    persist_dir=kernel_dir
+    #)
 
     # Dumbbell kernel
     dumbbell_kernel = test_kernel.create_dumbbell_kernel_z(

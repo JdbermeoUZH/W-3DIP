@@ -49,7 +49,7 @@ class NibDataset(Dataset):
     ):
         self.input_volume_dir = input_volume_dir
         self.transform = transform
-        self.file_paths = glob.glob(os.path.join(self.input_volume_dir, "*.nii.gz"))
+        self.input_volume_filepaths = glob.glob(os.path.join(self.input_volume_dir, "*.nii.gz"))
         self.dtype = dtype
 
         if device:
@@ -58,10 +58,10 @@ class NibDataset(Dataset):
             self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     def __len__(self):
-        return len(self.file_paths)
+        return len(self.input_volume_filepaths)
 
-    def __getitem__(self, idx: int):
-        img = nib.load(self.file_paths[idx])  # !Image.open(os.path.join(self.root_dir,img_name))
+    def __getitem__(self, idx: int) -> torch.FloatTensor:
+        img = nib.load(self.input_volume_filepaths[idx])  # !Image.open(os.path.join(self.root_dir,img_name))
 
         # Convert image to PyTorch tensor
         img = np_to_torch(img.get_fdata(dtype=self.dtype))
@@ -104,7 +104,7 @@ class NibDataset(Dataset):
                             patches[patch_num_x, patch_num_y, patch_num_z].numpy().astype(np.uint16),
                             np.eye(4)
                         )
-                        image_name = os.path.basename(self.file_paths[idx]).split('.nii.gz')[0]
+                        image_name = os.path.basename(self.input_volume_filepaths[idx]).split('.nii.gz')[0]
                         patch_filename = f'vol_{image_name}_pos_x_{patch_center_x}' \
                                          f'_pos_y_{patch_center_y}_pos_z_{patch_center_z}.nii.gz'
                         nib.save(nib_img, os.path.join(patch_persist_dir, patch_filename))

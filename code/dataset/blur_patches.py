@@ -40,7 +40,7 @@ if __name__ == '__main__':
             )
 
             nib.save(nib_img,
-                     os.path.join(blurred_patch_dir, os.path.basename(nib_dataset.file_paths[idx])))
+                     os.path.join(blurred_patch_dir, os.path.basename(nib_dataset.input_volume_filepaths[idx])))
 
 
 

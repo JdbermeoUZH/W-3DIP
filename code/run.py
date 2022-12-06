@@ -102,8 +102,8 @@ if __name__ == '__main__':
     blurred_patch_dir = os.path.join(blurred_patches_dir, "gaussian_sigmas_xyz_1.1_1.1_1.85_size_5_5_10")
     nib_dataset = NibDataset(input_volume_dir=blurred_patch_dir, dtype=np.float32)
     target_blurred_patch = nib_dataset.__getitem__(vol_idx).to(device)
-    target_patch_filepath = nib_dataset.file_paths[vol_idx]
-    target_patch_filename = os.path.basename(nib_dataset.file_paths[vol_idx])
+    target_patch_filepath = nib_dataset.input_volume_filepaths[vol_idx]
+    target_patch_filename = os.path.basename(nib_dataset.input_volume_filepaths[vol_idx])
     target_patch_spatial_size = tuple(target_blurred_patch.size()[1:])
     target_patch_num_channels = target_blurred_patch.size()[0]
     print(target_patch_filepath)
@@ -141,7 +141,7 @@ if __name__ == '__main__':
 
     # Losses
     mse = torch.nn.MSELoss().to(device)
-    ssim = MS_SSIM(size_average=True, channel=1, spatial_dims=3, win_size=7).to(device)
+    ssim = SSIM3D().to(device)
 
     # Report memory usage
     report_memory_usage(things_in_gpu="Model", print_anyways=True)

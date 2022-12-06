@@ -207,7 +207,7 @@ def np_to_pil(img_np):
     return Image.fromarray(ar)
 
 
-def np_to_torch(img_np):
+def np_to_torch(img_np: np.ndarray) -> torch.FloatTensor:
     '''Converts image in numpy.array to torch.Tensor.
 
     From C x W x H [0..1] to  C x W x H [0..1]
