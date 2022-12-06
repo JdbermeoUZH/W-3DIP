@@ -1,6 +1,6 @@
 import os
 import glob
-from typing import Type, Tuple, List
+from typing import Type, Tuple, List, Union
 
 import numpy as np
 import nibabel as nib
@@ -8,8 +8,7 @@ import torch
 from torch.nn.functional import conv3d
 
 from dataset.NIB_Dataset import NibDataset
-from utils.common_utils import np_to_torch
-from run import store_volume_nii_gz
+from utils.common_utils import np_to_torch, store_volume_nii_gz
 
 
 def _noiseless_blurring(volume: torch.FloatTensor, kernel: torch.FloatTensor) -> torch.FloatTensor:
@@ -25,7 +24,7 @@ class SimulatedBlurDataset(NibDataset):
             input_volume_dir: str,
             kernels_dir: str,
             transform=None,
-            device: str = None,
+            device: Union[str, torch.device] = None,
             dtype: Type[np.dtype] = np.float32,
             noiseless_blurring: bool = True
     ):

@@ -1,5 +1,8 @@
 __author__ = 'gbredell'
 
+import os
+
+import nibabel as nib
 import torch
 from prettytable import PrettyTable
 import torchvision
@@ -332,3 +335,8 @@ def report_memory_usage(things_in_gpu: str, total_memory_threshold: float = 0.4,
                   f"\n\t {torch.cuda.memory_allocated(0) / total_gpu_memory: 0.3f} % of total memory.")
     else:
         print("No GPU available")
+
+
+def store_volume_nii_gz(vol_array: np.ndarray, volume_filename: str, output_dir: str):
+    nib_img = nib.Nifti1Image(vol_array, np.eye(4))
+    nib.save(nib_img, os.path.join(output_dir, volume_filename))

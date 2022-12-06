@@ -1,6 +1,6 @@
 import os
 import glob
-from typing import Type, Tuple
+from typing import Type, Tuple, Union
 
 import nibabel as nib
 import numpy as np
@@ -44,7 +44,7 @@ class NibDataset(Dataset):
             self,
             input_volume_dir: str,
             transform=None,
-            device: str = None,
+            device: Union[str, torch.device] = None,
             dtype: Type[np.dtype] = np.float32
     ):
         self.input_volume_dir = input_volume_dir

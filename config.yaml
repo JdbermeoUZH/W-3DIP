@@ -1,7 +1,6 @@
 input:
-  vol_idx: 2
-  volume_dir: ["..", "..", "data", "blurred_patches", "gaussian_sigmas_xyz_1.1_1.1_1.85_size_5_5_10"]
-
+  input_vols_dir: ["..", "..", "experiments", 'noiseless_kernels', 'random_patches_same_volume', 'volumes', '64x64x128']
+  kernels_dir: ["..", "..", "experiments", 'noiseless_kernels', 'random_patches_same_volume', 'kernels']
 
 model_definition:
   image_generator:
@@ -21,5 +20,5 @@ training:
     wk: 0.001
 
 output:
-  dir: ['..', '..', 'results', 'add_ssim', 'library', 'SSIM']
+  dir: ['..', '..', 'results', 'test']
   checkpoint_frequencies: [[50, 25], [250, 100], [1000, 250], [2000, 500]]
