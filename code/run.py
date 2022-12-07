@@ -6,18 +6,14 @@ from typing import Tuple
 import pandas as pd
 import numpy as np
 import torch
-from torch.optim.lr_scheduler import MultiStepLR
-from tqdm import tqdm
-from pytorch_msssim import SSIM
 
 from dataset.SimulatedBlurDataset import SimulatedBlurDataset
 from model.InputNoise import InputNoise
-from model.W3DIP import W3DIP, l2_regularization
+from model.W3DIP import W3DIP
 from model.ImageGenerator import ImageGeneratorInterCNN3D
 from model.KernelGenerator import KernelGenerator
 from train.W3DIPTrainer import W3DIPTrainer
-from utils.common_utils import count_parameters, report_memory_usage, store_volume_nii_gz
-from utils.SSIM import SSIM3D
+from utils.common_utils import store_volume_nii_gz
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
