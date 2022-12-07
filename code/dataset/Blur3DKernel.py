@@ -66,7 +66,7 @@ class Blur3DKernel:
 
     def create_dumbbell_kernel_z(
             self,
-            lobe_center_frac: float = 4/5,
+            lobe_center_frac: float = 7/10,
             plot_kernel: bool = False,
             persist_dir: str = None
     ) -> np.ndarray:
@@ -75,10 +75,10 @@ class Blur3DKernel:
         xyz = np.column_stack([x.flat, y.flat, z.flat])
 
         lobe_center = lobe_center_frac * self.shape[2]/2
-        lobes_scale_xy, lobes_scale_z = (1/2) * self.shape[1]/2, (1/3) * (self.shape[2]/2 - lobe_center)
+        lobes_scale_xy, lobes_scale_z = (1/2) * self.shape[1]/2, (1/2) * (self.shape[2]/2 - lobe_center)
         lobes_covariance = np.diag(np.array([lobes_scale_xy, lobes_scale_xy, lobes_scale_z]) ** 2)
 
-        center_scale_xy, center_scale_z = (1/5) * self.shape[1]/2, (1/3) * lobe_center
+        center_scale_xy, center_scale_z = (1/4) * self.shape[1]/2, (1/3) * lobe_center
         center_covariance = np.diag(np.array([center_scale_xy, center_scale_xy, center_scale_z]) ** 2)
 
         lobe_1 = multivariate_normal.pdf(xyz, mean=(0, 0, lobe_center), cov=lobes_covariance)
@@ -88,7 +88,7 @@ class Blur3DKernel:
         lobe_2 = multivariate_normal.pdf(xyz, mean=(0, 0, -lobe_center), cov=lobes_covariance)
         lobe_2 = _normalize_kernel(lobe_2).reshape(x.shape)
 
-        kernel = (1/7) * (3 * lobe_1 + 3 * lobe_2 + center)
+        kernel = (1/5) * (2 * lobe_1 + 2 * lobe_2 + center)
 
         if plot_kernel:
             plot_kernel_log_scale(kernel, x, y, z)
