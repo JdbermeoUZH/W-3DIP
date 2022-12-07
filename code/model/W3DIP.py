@@ -28,8 +28,9 @@ class W3DIP(nn.Module):
 
         return sharp_img_estimate, blur_kernel_estimate, blurr_img_estimate
 
-    def input_noises_to_cuda(self):
-        self.image_gen.input_noise.to_cuda()
-        self.kernel_gen.input_noise.to_cuda()
+    def to_device(self, device: torch.device):
+        self.image_gen.input_noise.to_device(device)
+        self.kernel_gen.input_noise.to_device(device)
+        self.to(device)
 
 
