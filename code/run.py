@@ -73,6 +73,7 @@ if __name__ == '__main__':
         dtype=np.float32
     )
 
+    metrics = {}
     for (ground_truth_volume_name, ground_truth_volume), blurred_volumes in dataset:
         report_image_name_str = f"Running W3DIP for image: {ground_truth_volume_name}"
         print(f"{report_image_name_str}\n{len(report_image_name_str) * '#'}")
@@ -94,6 +95,8 @@ if __name__ == '__main__':
             output_dir=ground_truth_output_dir)
 
         target_patch_spatial_size = tuple(ground_truth_volume.size()[1:])
+
+        metrics[ground_truth_volume_name] = {}
 
         # Iterate over the blurring kernels to try to deconvolve
         for kernel_name, kernel, blurred_volume in blurred_volumes:
@@ -147,3 +150,22 @@ if __name__ == '__main__':
                 checkpoint_schedule=save_frequency_schedule,
                 checkpoint_base_dir=output_dir
             )
+
+            metrics[ground_truth_volume_name][kernel_name] =\
+                {'sharp_volume_estimation': trainer.image_estimate_metrics,
+                 'kernel_estimation': trainer.kernel_estimate_metrics}
+
+    dataframes = []
+    for vol_name, metrics_of_different_kernels in metrics.items():
+        for kernel_type, metrics_per_kernel in metrics_of_different_kernels.items():
+            sharp_image_metrics_df = pd.DataFrame(metrics_per_kernel['sharp_volume_estimation'])\
+                .set_index('step')
+            kernel_metrics = pd.DataFrame(metrics_per_kernel['kernel_estimation']) \
+                .set_index('step')
+            sharp_image_metrics_df = sharp_image_metrics_df.join(kernel_metrics.mse.rename('kernel_mse'))
+            sharp_image_metrics_df['vol_name'] = vol_name
+            sharp_image_metrics_df['kernel_type'] = kernel_type
+            sharp_image_metrics_df = sharp_image_metrics_df.reset_index().set_index(['vol_name', 'kernel_type', 'step'])
+            dataframes.append(sharp_image_metrics_df)
+
+    pd.concat(dataframes).to_csv(os.path.join(base_output_dir, 'consolidated_performance_accross_experiments.csv'))
