@@ -23,7 +23,7 @@ class W3DIP(nn.Module):
 
     def forward(self):
         sharp_img_estimate = self.image_gen()
-        blur_kernel_estimate = self.kernel_gen().view(-1, 1, *self.kernel_gen.get_estimated_kernel_size())
+        blur_kernel_estimate = self.kernel_gen().view(-1, 1, * self.kernel_gen.get_estimated_kernel_size())
         blurr_img_estimate = nn.functional.conv3d(sharp_img_estimate, blur_kernel_estimate, padding='same', bias=None)
 
         return sharp_img_estimate, blur_kernel_estimate, blurr_img_estimate

@@ -11,39 +11,7 @@ from torchmetrics.functional import peak_signal_noise_ratio, mean_squared_error
 
 from model.W3DIP import W3DIP, l2_regularization
 from utils.common_utils import count_parameters, report_memory_usage, store_volume_nii_gz
-
-
-def checkpoint_outputs(
-        step: int,
-        blurred_vol_estimate: Union[torch.cuda.FloatTensor, torch.Tensor],
-        sharpened_vol_estimate: Union[torch.cuda.FloatTensor, torch.Tensor],
-        kernel_estimate: Union[torch.cuda.FloatTensor, torch.Tensor],
-        output_dir: str, patch_filename: str
-):
-    step_output_dir = os.path.join(output_dir, f'step_{step}')
-    os.makedirs(step_output_dir, exist_ok=True)
-
-    store_volume_nii_gz(
-        vol_array=blurred_vol_estimate.cpu().detach().numpy(),
-        volume_filename=f"blurred_vol_estimate__{patch_filename}.nii.gz",
-        output_dir=step_output_dir)
-
-    store_volume_nii_gz(
-        vol_array=sharpened_vol_estimate.cpu().detach().numpy(),
-        volume_filename=f"sharpened_vol_estimate__{patch_filename}.nii.gz",
-        output_dir=step_output_dir)
-
-    kernel_estimate = kernel_estimate.cpu().detach().numpy()
-    kernel_estimate /= np.max(kernel_estimate)
-    store_volume_nii_gz(
-        vol_array=kernel_estimate,
-        volume_filename=f"kernel_estimate__{patch_filename}.nii.gz",
-        output_dir=step_output_dir)
-
-    store_volume_nii_gz(
-        vol_array=(kernel_estimate > 0.1).astype(np.uint8),
-        volume_filename=f"kernel_estimate_seg_mask_0.1_threshold__{patch_filename}.nii.gz",
-        output_dir=step_output_dir)
+from train.deconv_utils import shifter_kernel
 
 
 class W3DIPTrainer:
@@ -150,24 +118,16 @@ class W3DIPTrainer:
                 save_freq_change, save_freq = save_frequency_schedule_loop.pop(0)
 
             if step % save_freq == 0 or step == num_steps - 1:
-                checkpoint_outputs(
+                self.checkpoint_network_outputs_and_metrics(
                     step=step,
                     blurred_vol_estimate=out_y[0, 0],
                     sharpened_vol_estimate=out_x[0, 0],
                     kernel_estimate=out_k[0, 0],
                     output_dir=checkpoint_base_dir,
-                    patch_filename=f'step_{step}'
+                    patch_filename=f'step_{step}',
+                    sharp_volume_ground_truth=sharp_volume_ground_truth,
+                    kernel_ground_truth=kernel_ground_truth
                 )
-
-                self.checkpoint_loss(output_dir=checkpoint_base_dir)
-
-                if sharp_volume_ground_truth is not None:
-                    self._record_sharp_vol_estimation_metrics(out_y, sharp_volume_ground_truth, step)
-                    self.checkpoint_sharp_volume_estimation_metrics(output_dir=checkpoint_base_dir)
-
-                if kernel_ground_truth is not None:
-                    print('a')
-                    self.checkpoint_kernel_estimation_metrics(output_dir=checkpoint_base_dir)
 
         # Clean up
         del out_x
@@ -175,20 +135,44 @@ class W3DIPTrainer:
         del out_k
         torch.cuda.empty_cache()
 
-    def _record_sharp_vol_estimation_metrics(self, out_y, sharp_volume_ground_truth, step):
+    def _record_sharp_vol_estimation_metrics(self, sharp_volume_estimate, sharp_volume_ground_truth, step):
         self.image_estimate_metrics['step'].append(step)
 
         # Calculate SSIM
         self.image_estimate_metrics['ssim'].append(
-            ssim(out_y[0], sharp_volume_ground_truth).item())
+            ssim(sharp_volume_estimate[None], sharp_volume_ground_truth).item())
 
         # Calculate PSNR
         self.image_estimate_metrics['psnr'].append(
-            peak_signal_noise_ratio(out_y[0], sharp_volume_ground_truth).item())
+            peak_signal_noise_ratio(sharp_volume_estimate[None], sharp_volume_ground_truth).item())
 
         # Calculate MSE
         self.image_estimate_metrics['mse'].append(
-            mean_squared_error(out_y[0], sharp_volume_ground_truth).item())
+            mean_squared_error(sharp_volume_estimate[None], sharp_volume_ground_truth).item())
+
+    def _record_kernel_estimation_error_metrics(self, kernel_estimate, kernel_ground_truth, step, step_output_dir):
+        # Find most likely translation by choosing the one with the lowest MSE
+        search_window = tuple(((np.array(kernel_estimate.shape[-3:]) - 1) / 2).astype(int))
+        min_mse, displacement_highest_overlap, kernel_ground_truth_max_overlap = \
+            shifter_kernel(mover=kernel_ground_truth, target=kernel_estimate, search_window=search_window)
+
+        # Add metrics to dictionary
+        self.kernel_estimate_metrics['step'].append(step)
+        self.kernel_estimate_metrics['mse'].append(min_mse.item())
+
+        # Store the version or portion of the ground truth kernel with the highest overlap
+        kernel_ground_truth_max_overlap = kernel_ground_truth_max_overlap.cpu().detach().numpy().copy()
+        kernel_ground_truth_max_overlap /= np.max(kernel_ground_truth_max_overlap)
+
+        store_volume_nii_gz(
+            vol_array=kernel_ground_truth_max_overlap,
+            volume_filename=f"kernel_ground_truth_max_overlap.nii.gz",
+            output_dir=step_output_dir)
+
+        store_volume_nii_gz(
+            vol_array=(kernel_ground_truth_max_overlap > 0.1).astype(np.uint8),
+            volume_filename=f"kernel_ground_truth_max_overlap_seg_mask_0.1_threshold.nii.gz",
+            output_dir=step_output_dir)
 
     def _record_losses(self, total: float, data_fitting_term: float,
                        wiener_term: Optional[float] = None,
@@ -214,6 +198,54 @@ class W3DIPTrainer:
     def checkpoint_kernel_estimation_metrics(self, output_dir: str):
         pd.DataFrame(self.kernel_estimate_metrics).to_csv(
             os.path.join(output_dir, 'kernel_estimate_metrics.csv'))
+
+    def checkpoint_network_outputs_and_metrics(
+            self,
+            step: int,
+            blurred_vol_estimate: Union[torch.cuda.FloatTensor, torch.Tensor],
+            sharpened_vol_estimate: Union[torch.cuda.FloatTensor, torch.Tensor],
+            kernel_estimate: Union[torch.cuda.FloatTensor, torch.Tensor],
+            output_dir: str, patch_filename: str,
+            sharp_volume_ground_truth: Optional[torch.FloatTensor] = None,
+            kernel_ground_truth: Optional[torch.FloatTensor] = None
+    ):
+        step_output_dir = os.path.join(output_dir, f'step_{step}')
+        os.makedirs(step_output_dir, exist_ok=True)
+
+        # Record metrics
+        self.checkpoint_loss(output_dir=output_dir)
+
+        if sharp_volume_ground_truth is not None:
+            self._record_sharp_vol_estimation_metrics(sharpened_vol_estimate, sharp_volume_ground_truth, step)
+            self.checkpoint_sharp_volume_estimation_metrics(output_dir=output_dir)
+
+        if kernel_ground_truth is not None:
+            self._record_kernel_estimation_error_metrics(kernel_estimate, kernel_ground_truth, step, step_output_dir)
+            self.checkpoint_kernel_estimation_metrics(output_dir=output_dir)
+
+        # Store outputs
+        store_volume_nii_gz(
+            vol_array=blurred_vol_estimate.cpu().detach().numpy(),
+            volume_filename=f"blurred_vol_estimate__{patch_filename}.nii.gz",
+            output_dir=step_output_dir)
+
+        store_volume_nii_gz(
+            vol_array=sharpened_vol_estimate.cpu().detach().numpy(),
+            volume_filename=f"sharpened_vol_estimate__{patch_filename}.nii.gz",
+            output_dir=step_output_dir)
+
+        kernel_estimate = kernel_estimate.cpu().detach().numpy().copy()
+        kernel_estimate /= np.max(kernel_estimate)
+        store_volume_nii_gz(
+            vol_array=kernel_estimate,
+            volume_filename=f"kernel_estimate__{patch_filename}.nii.gz",
+            output_dir=step_output_dir)
+
+        store_volume_nii_gz(
+            vol_array=(kernel_estimate > 0.1).astype(np.uint8),
+            volume_filename=f"kernel_estimate_seg_mask_0.1_threshold__{patch_filename}.nii.gz",
+            output_dir=step_output_dir)
+
 
 
 
