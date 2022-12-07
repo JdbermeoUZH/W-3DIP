@@ -8,6 +8,7 @@ import numpy as np
 import torch
 from torch.optim.lr_scheduler import MultiStepLR
 from tqdm import tqdm
+from pytorch_msssim import SSIM
 
 from dataset.SimulatedBlurDataset import SimulatedBlurDataset
 from model.InputNoise import InputNoise
@@ -73,6 +74,9 @@ if __name__ == '__main__':
     )
 
     for (ground_truth_volume_name, ground_truth_volume), blurred_volumes in dataset:
+        report_image_name_str = f"Running W3DIP for image: {ground_truth_volume_name}"
+        print(f"{report_image_name_str}\n{len(report_image_name_str) * '#'}")
+
         target_patch_num_channels = ground_truth_volume.size()[0]
 
         ground_truth_output_dir = os.path.join(
@@ -85,7 +89,7 @@ if __name__ == '__main__':
         # Save the ground truth volume
         os.makedirs(ground_truth_output_dir, exist_ok=True)
         store_volume_nii_gz(
-            vol_array=ground_truth_volume.cpu().detach().numpy(),
+            vol_array=ground_truth_volume[0].cpu().detach().numpy(),
             volume_filename=f"ground_truth_volume.nii.gz",
             output_dir=ground_truth_output_dir)
 
@@ -93,6 +97,9 @@ if __name__ == '__main__':
 
         # Iterate over the blurring kernels to try to deconvolve
         for kernel_name, kernel, blurred_volume in blurred_volumes:
+            report_kernel_type = f"Running for kernel: {kernel_name}"
+            print(f"{report_kernel_type}\n{len(report_kernel_type) * '-'}\n")
+
             # Create dir where the results will be stored
             output_dir = os.path.join(
                 ground_truth_output_dir,
@@ -102,7 +109,7 @@ if __name__ == '__main__':
 
             # Save the blurred volume
             store_volume_nii_gz(
-                vol_array=ground_truth_volume.cpu().detach().numpy(),
+                vol_array=blurred_volume[0].cpu().detach().numpy(),
                 volume_filename=f"blured_volume_w_{kernel_name}.nii.gz",
                 output_dir=output_dir)
 
@@ -131,4 +138,12 @@ if __name__ == '__main__':
                 w_k=wk
             )
 
-            trainer.fit_no_guidance()
+            trainer.fit_no_guidance(
+                blurred_volume=blurred_volume,
+                sharp_volume_ground_truth=ground_truth_volume,
+                kernel_ground_truth=kernel,
+                num_steps=num_iter,
+                mse_to_ssim_step=mse_to_ssim_step,
+                checkpoint_schedule=save_frequency_schedule,
+                checkpoint_base_dir=output_dir
+            )
