@@ -48,24 +48,24 @@ def checkpoint_outputs(blurred_vol_estimate: Union[torch.cuda.FloatTensor, torch
 
     store_volume_nii_gz(
         vol_array=blurred_vol_estimate.cpu().detach().numpy(),
-        volume_filename=f"blurred_vol_estimate__{patch_filename}",
+        volume_filename=f"blurred_vol_estimate__{patch_filename}.nii.gz",
         output_dir=step_output_dir)
 
     store_volume_nii_gz(
         vol_array=sharpened_vol_estimate.cpu().detach().numpy(),
-        volume_filename=f"sharpened_vol_estimate__{patch_filename}",
+        volume_filename=f"sharpened_vol_estimate__{patch_filename}.nii.gz",
         output_dir=step_output_dir)
 
     kernel_estimate = kernel_estimate.cpu().detach().numpy()
     kernel_estimate /= np.max(kernel_estimate)
     store_volume_nii_gz(
         vol_array=kernel_estimate,
-        volume_filename=f"kernel_estimate__{patch_filename}",
+        volume_filename=f"kernel_estimate__{patch_filename}.nii.gz",
         output_dir=step_output_dir)
 
     store_volume_nii_gz(
         vol_array=(kernel_estimate > 0.1).astype(np.uint8),
-        volume_filename=f"kernel_estimate_seg_mask_0.1_threshold__{patch_filename}",
+        volume_filename=f"kernel_estimate_seg_mask_0.1_threshold__{patch_filename}.nii.gz",
         output_dir=step_output_dir)
 
 
@@ -77,7 +77,7 @@ def define_model_objects(
         kernel_gen_num_hidden: int,
         estimated_kernel_shape: Tuple[int, ...]
 ):
-    w3dip = W3DIP(
+    w3dip_ = W3DIP(
         image_gen=ImageGeneratorInterCNN3D(
             num_output_channels=target_patch_num_channels,
             output_spatial_size=target_patch_spatial_size,
@@ -90,14 +90,14 @@ def define_model_objects(
             estimated_kernel_shape=estimated_kernel_shape
         )
     )
-    w3dip.input_noises_to_cuda()
-    w3dip.to(device)
+    w3dip_.input_noises_to_cuda()
+    w3dip_.to(device)
 
     # Report memory usage
     report_memory_usage(things_in_gpu="Model", print_anyways=True)
 
     # Report model summary
-    count_parameters(w3dip)
+    count_parameters(w3dip_)
 
     # Losses
     mse_ = torch.nn.MSELoss().to(device)
@@ -105,7 +105,7 @@ def define_model_objects(
 
     # Define Optimizer
     optimizer_ = torch.optim.Adam(
-        [{'params': w3dip.image_gen.parameters()}, {'params': w3dip.kernel_gen.parameters(), 'lr': 1e-4}], lr=LR
+        [{'params': w3dip_.image_gen.parameters()}, {'params': w3dip_.kernel_gen.parameters(), 'lr': 1e-4}], lr=LR
     )
     scheduler_ = MultiStepLR(optimizer_, milestones=[2000, 3000, 4000], gamma=0.5)  # learning rates
     loss_history_ = {
@@ -116,7 +116,7 @@ def define_model_objects(
         'l2_reg_kernel': []
     }
 
-    return w3dip, mse_, ssim_, optimizer_, scheduler_, loss_history_
+    return w3dip_, mse_, ssim_, optimizer_, scheduler_, loss_history_
 
 
 if __name__ == '__main__':
@@ -154,16 +154,6 @@ if __name__ == '__main__':
     for (ground_truth_volume_name, ground_truth_volume), blurred_volumes in dataset:
         target_patch_num_channels = ground_truth_volume.size()[0]
 
-        # Define model
-        w3dip, mse, ssim, optimizer, scheduler, loss_history = define_model_objects(
-            target_patch_num_channels=ground_truth_volume.size()[0],
-            target_patch_spatial_size=tuple(ground_truth_volume.size()[1:]),
-            interCNN_feature_maps=interCNN_feature_maps,
-            kernel_gen_noise_input_size=kernel_generator_cfg['net_noise_input_size'],
-            kernel_gen_num_hidden=kernel_generator_cfg['num_hidden_units'],
-            estimated_kernel_shape=kernel_size_estimate
-        )
-
         ground_truth_output_dir = os.path.join(
             base_output_dir,
             ground_truth_volume_name,
@@ -175,7 +165,7 @@ if __name__ == '__main__':
         os.makedirs(ground_truth_output_dir, exist_ok=True)
         store_volume_nii_gz(
             vol_array=ground_truth_volume.cpu().detach().numpy(),
-            volume_filename=f"ground_truth_volume",
+            volume_filename=f"ground_truth_volume.nii.gz",
             output_dir=ground_truth_output_dir)
 
         # Iterate over the blurring kernels to try to deconvolve
@@ -190,8 +180,18 @@ if __name__ == '__main__':
             # Save the blurred volume
             store_volume_nii_gz(
                 vol_array=ground_truth_volume.cpu().detach().numpy(),
-                volume_filename=f"blured_volume_w_{kernel_name}",
+                volume_filename=f"blured_volume_w_{kernel_name}.nii.gz",
                 output_dir=output_dir)
+
+            # Define model to estimate blur kernel and sharp image
+            w3dip, mse, ssim, optimizer, scheduler, loss_history = define_model_objects(
+                target_patch_num_channels=ground_truth_volume.size()[0],
+                target_patch_spatial_size=tuple(ground_truth_volume.size()[1:]),
+                interCNN_feature_maps=interCNN_feature_maps,
+                kernel_gen_noise_input_size=kernel_generator_cfg['net_noise_input_size'],
+                kernel_gen_num_hidden=kernel_generator_cfg['num_hidden_units'],
+                estimated_kernel_shape=kernel_size_estimate
+            )
 
             # Initialization for outer-loop
             save_frequency_schedule_loop = list(save_frequency_schedule)
@@ -230,26 +230,31 @@ if __name__ == '__main__':
                 if step % save_freq == 0:
                     checkpoint_outputs(
                         blurred_vol_estimate=out_y, sharpened_vol_estimate=out_x.squeeze_(),
-                        kernel_estimate=out_k.squeeze_(), output_dir=output_dir,
+                        kernel_estimate=out_k.squeeze_(),
+                        output_dir=output_dir,
                         patch_filename=f'step_{step}'
                     )
 
                     # Store loss history
                     pd.DataFrame(loss_history).to_csv(os.path.join(output_dir, 'loss_history.csv'))
 
-                # Log what happens at the last step
-                checkpoint_outputs(
-                    blurred_vol_estimate=out_y, sharpened_vol_estimate=out_x.squeeze_(),
-                    kernel_estimate=out_k.squeeze_(),
-                    output_dir=output_dir, patch_filename=f'step_{step}'
-                )
+                    # Measure performance metrics
 
-                # Store loss history
-                pd.DataFrame(loss_history).to_csv(os.path.join(output_dir, 'loss_history.csv'))
 
-                # Clean up
-                del out_x
-                del out_y
-                del out_k
-                del w3dip
-                torch.cuda.empty_cache()
+            # Log what happens at the last step
+            checkpoint_outputs(
+                blurred_vol_estimate=out_y, sharpened_vol_estimate=out_x.squeeze_(),
+                kernel_estimate=out_k.squeeze_(),
+                output_dir=output_dir,
+                patch_filename=f'step_{step}'
+            )
+
+            # Store loss history
+            pd.DataFrame(loss_history).to_csv(os.path.join(output_dir, 'loss_history.csv'))
+
+            # Clean up
+            del out_x
+            del out_y
+            del out_k
+            del w3dip
+            torch.cuda.empty_cache()

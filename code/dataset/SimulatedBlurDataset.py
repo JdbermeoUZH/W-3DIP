@@ -38,16 +38,17 @@ class SimulatedBlurDataset(NibDataset):
         ground_truth_vol = nib.load(self.input_volume_filepaths[idx])
 
         # Convert image to PyTorch tensor
-        ground_truth_vol = np_to_torch(ground_truth_vol.get_fdata(dtype=self.dtype))
+        ground_truth_vol = np_to_torch(ground_truth_vol.get_fdata(dtype=self.dtype)).to(self.device)
 
         # Obtain blurred versions of the ground truth image
-        blur_kernels = [(os.path.basename(kernel_fp).strip('.npy'), np_to_torch(np.load(kernel_fp)))
-                   for kernel_fp in self.kernels_filepaths]
+        blur_kernels = [(os.path.basename(kernel_fp).strip('.npy'), np_to_torch(np.load(kernel_fp)).to(self.device))
+                        for kernel_fp in self.kernels_filepaths]
 
         blurred_volumes = []
 
         for blur_kernel_name, blur_kernel in blur_kernels:
-            blurred_vol = self.blurring_fn(ground_truth_vol.float(), torch.unsqueeze(blur_kernel, dim=0).float())
+            blurred_vol = self.blurring_fn(ground_truth_vol.float(), torch.unsqueeze(blur_kernel, dim=0).float())\
+                .to(self.device)
             blurred_volumes.append((blur_kernel_name, blur_kernel, blurred_vol))
 
         return (grount_truth_vol, ground_truth_vol), blurred_volumes

@@ -13,7 +13,7 @@ model_definition:
 
 training:
   lr: 0.01
-  steps: 10000
+  steps: 100
   mse_to_ssim_step: 2
 
   loss_fn:
