@@ -6,6 +6,7 @@ from typing import Tuple
 import pandas as pd
 import numpy as np
 import torch
+import matplotlib.pyplot as plt
 
 from dataset.SimulatedBlurDataset import SimulatedBlurDataset
 from model.InputNoise import InputNoise
@@ -35,6 +36,57 @@ def parse_arguments_and_load_config_file() -> Tuple[argparse.Namespace, dict]:
             raise exc
 
     return arguments, yaml_config_params
+
+
+def plot_figures_store_metrics(metrics_):
+    # Wrange the metrics logged into a dataframe
+    dataframes = []
+    baseline_df_list = []
+    for vol_name, metrics_of_different_kernels in metrics_.items():
+        for kernel_type, metrics_per_kernel in metrics_of_different_kernels.items():
+            sharp_image_metrics_df = pd.DataFrame(metrics_per_kernel['sharp_volume_estimation']) \
+                .set_index('step')
+            kernel_metrics = pd.DataFrame(metrics_per_kernel['kernel_estimation']) \
+                .set_index('step')
+            sharp_image_metrics_df = sharp_image_metrics_df.join(kernel_metrics.mse.rename('kernel_mse'))
+            sharp_image_metrics_df['vol_name'] = vol_name
+            sharp_image_metrics_df['kernel_type'] = kernel_type
+            sharp_image_metrics_df = sharp_image_metrics_df.reset_index().set_index(['vol_name', 'kernel_type', 'step'])
+            dataframes.append(sharp_image_metrics_df)
+
+            baseline_df_list.append({'vol_name': vol_name, 'kernel_type': kernel_type} | metrics_per_kernel['baseline'])
+
+    # Store the model metrics and baseline performance metrics
+    results_df = pd.concat(dataframes)
+    results_df.to_csv(os.path.join(base_output_dir, 'consolidated_performance_accross_experiments.csv'))
+
+    baselines_df = pd.DataFrame(baseline_df_list).set_index('vol_name').sort_index()
+    baselines_df.to_csv(os.path.join(base_output_dir, 'baseline_performance_across_experiments.csv'))
+    kernel_names = [kernel_name_ for kernel_name_ in results_df.index.get_level_values(1).drop_duplicates()]
+
+    max_steps = results_df.index.get_level_values(2).max()
+
+    # Generate plots
+    for kernel in kernel_names:
+        for metric in results_df.columns:
+            results_df.sort_index().loc[(slice(None), slice(kernel)), :].reset_index() \
+                .pivot_table(index='step', columns='vol_name', values=[metric]) \
+                .plot(figsize=(10, 5), logy=True, ylabel=metric,
+                      title=f"Performance for the {kernel} kernel: Estimated Sharp Volume")
+
+            colors = [line.get_color() for line in plt.gca().lines]
+
+            plt.vlines(x=mse_to_ssim_step, ymin=0,
+                       ymax=results_df.sort_index().loc[(slice(None), slice(kernel)), metric].max(),
+                       linestyle='--')
+
+            if metric != 'kernel_mse':
+                print(metric)
+                for i, (img_name, value) in enumerate(baselines_df[baselines_df.kernel_type == kernel][metric].items()):
+                    print(img_name)
+                    plt.hlines(y=value, xmin=0, xmax=max_steps, linestyle='--', alpha=0.55, color=colors[i])
+
+            plt.savefig(os.path.join(base_output_dir, f'performance_{metric}_w_kernel_{kernel}.jpg'))
 
 
 if __name__ == '__main__':
@@ -147,21 +199,10 @@ if __name__ == '__main__':
                 checkpoint_base_dir=output_dir
             )
 
-            metrics[ground_truth_volume_name][kernel_name] =\
-                {'sharp_volume_estimation': trainer.image_estimate_metrics,
-                 'kernel_estimation': trainer.kernel_estimate_metrics}
+            metrics[ground_truth_volume_name][kernel_name] = {
+                'sharp_volume_estimation': trainer.image_estimate_metrics,
+                'kernel_estimation': trainer.kernel_estimate_metrics,
+                'baseline': trainer.baseline_blurr_to_gt_metrics
+            }
 
-    dataframes = []
-    for vol_name, metrics_of_different_kernels in metrics.items():
-        for kernel_type, metrics_per_kernel in metrics_of_different_kernels.items():
-            sharp_image_metrics_df = pd.DataFrame(metrics_per_kernel['sharp_volume_estimation'])\
-                .set_index('step')
-            kernel_metrics = pd.DataFrame(metrics_per_kernel['kernel_estimation']) \
-                .set_index('step')
-            sharp_image_metrics_df = sharp_image_metrics_df.join(kernel_metrics.mse.rename('kernel_mse'))
-            sharp_image_metrics_df['vol_name'] = vol_name
-            sharp_image_metrics_df['kernel_type'] = kernel_type
-            sharp_image_metrics_df = sharp_image_metrics_df.reset_index().set_index(['vol_name', 'kernel_type', 'step'])
-            dataframes.append(sharp_image_metrics_df)
-
-    pd.concat(dataframes).to_csv(os.path.join(base_output_dir, 'consolidated_performance_accross_experiments.csv'))
+    plot_figures_store_metrics(metrics)

@@ -48,6 +48,12 @@ class W3DIPTrainer:
             'mse': []
         }
 
+        self.baseline_blurr_to_gt_metrics = {
+            'ssim': 0,
+            'psnr': 0,
+            'mse': 1e10
+        }
+
         self.device = device
 
         # Losses
@@ -87,6 +93,10 @@ class W3DIPTrainer:
         # Initialization for outer-loop
         save_frequency_schedule_loop = list(checkpoint_schedule)
         save_freq_change, save_freq = save_frequency_schedule_loop.pop(0)
+
+        # Record baseline metrics
+        if blurred_volume is not None:
+            self._record_baseline_metrics(blurred_volume, sharp_volume_ground_truth)
 
         for step in tqdm(range(num_steps)):
             # Forward pass
@@ -134,6 +144,14 @@ class W3DIPTrainer:
         del out_y
         del out_k
         torch.cuda.empty_cache()
+
+    def _record_baseline_metrics(self, blurred_volume, sharp_volume_ground_truth):
+        # Calculate SSIM
+        self.baseline_blurr_to_gt_metrics['ssim'] = ssim(blurred_volume, sharp_volume_ground_truth).item()
+        # Calculate PSNR
+        self.baseline_blurr_to_gt_metrics['psnr'] = peak_signal_noise_ratio(blurred_volume, sharp_volume_ground_truth).item()
+        # Calculate MSE
+        self.baseline_blurr_to_gt_metrics['mse'] = mean_squared_error(blurred_volume, sharp_volume_ground_truth).item()
 
     def _record_sharp_vol_estimation_metrics(self, sharp_volume_estimate, sharp_volume_ground_truth, step):
         self.image_estimate_metrics['step'].append(step)
@@ -199,6 +217,10 @@ class W3DIPTrainer:
         pd.DataFrame(self.kernel_estimate_metrics).to_csv(
             os.path.join(output_dir, 'kernel_estimate_metrics.csv'))
 
+    def checkpoint_bare_baseline_metrics(self, output_dir: str):
+        pd.Series(self.baseline_blurr_to_gt_metrics).to_csv(
+            os.path.join(output_dir, 'baseline_blurr_to_gt_metrics.csv'))
+
     def checkpoint_network_outputs_and_metrics(
             self,
             step: int,
@@ -218,6 +240,7 @@ class W3DIPTrainer:
         if sharp_volume_ground_truth is not None:
             self._record_sharp_vol_estimation_metrics(sharpened_vol_estimate, sharp_volume_ground_truth, step)
             self.checkpoint_sharp_volume_estimation_metrics(output_dir=output_dir)
+            self.checkpoint_bare_baseline_metrics(output_dir=output_dir)
 
         if kernel_ground_truth is not None:
             self._record_kernel_estimation_error_metrics(kernel_estimate, kernel_ground_truth, step, step_output_dir)

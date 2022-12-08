@@ -13,12 +13,12 @@ model_definition:
 
 training:
   lr: 0.01
-  steps: 10000
+  steps: 5000
   mse_to_ssim_step: 1000
 
   loss_fn:
     wk: 0.001
 
 output:
-  dir: ['..', '..', 'results', 'multiple_volumes_kenels', 'transition_ssim_step_1k']
+  dir: ['..', '..', 'results', 'test']
   checkpoint_frequencies: [[50, 25], [250, 100], [1000, 250], [2000, 500]]
