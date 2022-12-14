@@ -1,5 +1,5 @@
 import os
-from typing import Union, Optional
+from typing import Union, Optional, Tuple
 
 import pandas as pd
 import numpy as np
@@ -9,7 +9,7 @@ from tqdm import tqdm
 from pytorch_msssim import SSIM, ssim
 from torchmetrics.functional import peak_signal_noise_ratio, mean_squared_error
 
-from model.W3DIP import W3DIP, l2_regularization
+from model.W3DIP import W3DIP, l2_regularization, W3DIPMultiPatch
 from utils.common_utils import count_parameters, report_memory_usage, store_volume_nii_gz
 from train.deconv_utils import shifter_kernel
 
@@ -17,7 +17,7 @@ from train.deconv_utils import shifter_kernel
 class W3DIPTrainer:
     def __init__(
             self,
-            w3dip: W3DIP,
+            w3dip: W3DIPMultiPatch,
             device: torch.device,
             lr_img_network: float = 1e-2,
             lr_kernel_network: float = 1e-4,
@@ -49,9 +49,9 @@ class W3DIPTrainer:
         }
 
         self.baseline_blurr_to_gt_metrics = {
-            'ssim': 0,
-            'psnr': 0,
-            'mse': 1e10
+            'ssim': [],
+            'psnr': [],
+            'mse': []
         }
 
         self.device = device
@@ -66,16 +66,16 @@ class W3DIPTrainer:
         self.lr_kernel_network = lr_kernel_network
 
         self.optimizer = torch.optim.Adam(
-            [{'params': w3dip.image_gen.parameters()},
-             {'params': w3dip.kernel_gen.parameters(), 'lr': self.lr_kernel_network}],
+            [{'params': image_generator.parameters()} for image_generator in w3dip.image_generators] +
+            [{'params': w3dip.kernel_gen.parameters(), 'lr': self.lr_kernel_network}],
             lr=self.lr_img_network
         )
         self.scheduler = MultiStepLR(self.optimizer, **lr_schedule_params)  # learning rates
 
     def fit_no_guidance(
             self,
-            blurred_volume: torch.FloatTensor,
-            sharp_volume_ground_truth: Optional[torch.FloatTensor] = None,
+            blurred_volumes: Tuple[torch.FloatTensor],
+            sharp_volumes_ground_truth: Optional[Tuple[torch.FloatTensor]]= None,
             kernel_ground_truth: Optional[torch.FloatTensor] = None,
             num_steps: int = 5000,
             mse_to_ssim_step: int = 1000,
@@ -95,21 +95,31 @@ class W3DIPTrainer:
         save_freq_change, save_freq = save_frequency_schedule_loop.pop(0)
 
         # Record baseline metrics
-        if sharp_volume_ground_truth is not None:
-            self._record_baseline_metrics(blurred_volume, sharp_volume_ground_truth)
+        if sharp_volumes_ground_truth is not None and len(sharp_volumes_ground_truth) > 0:
+            for blurred_volume, sharp_volume_ground_truth in zip(blurred_volumes, sharp_volumes_ground_truth):
+                self._record_baseline_metrics(blurred_volume, sharp_volume_ground_truth)
 
         for step in tqdm(range(num_steps)):
             # Forward pass
-            out_x, out_k, out_y = self.w3dip()
+            sharp_img_estimates, blur_kernel_estimate, blurr_img_estimates = self.w3dip()
 
             if check_memory_usage:
                 report_memory_usage(things_in_gpu="Model and Maps")
 
             # Measure loss
-            l2_reg = self.w_k * l2_regularization(out_k)
+            l2_reg = self.w_k * l2_regularization(blur_kernel_estimate)
 
-            data_fitting_term = self.mse(out_y, blurred_volume[None, ]) if step < mse_to_ssim_step else \
-                1 - self.ssim(out_y, blurred_volume[None, ])
+            # Average data fitting terms of all patches
+            data_fitting_term = None
+            for i, (blurr_img_estimate, blurred_volume) in enumerate(zip(blurr_img_estimates, blurred_volumes)):
+                data_fitting_term_i = self.mse(blurr_img_estimate, blurred_volume[None, ]) if step < mse_to_ssim_step else \
+                    1 - self.ssim(blurr_img_estimate, blurred_volume[None, ])
+                if i == 0:
+                    data_fitting_term = data_fitting_term_i
+                else:
+                    data_fitting_term += data_fitting_term_i
+
+            data_fitting_term = data_fitting_term / len(blurr_img_estimates)
 
             loss = l2_reg + data_fitting_term
 
@@ -127,6 +137,8 @@ class W3DIPTrainer:
             if step > save_freq_change and len(save_frequency_schedule_loop) > 0:
                 save_freq_change, save_freq = save_frequency_schedule_loop.pop(0)
 
+            # TODO: Make this work for all the patches loaded. Will probably need to add the patches names
+            """
             if step % save_freq == 0 or step == num_steps - 1:
                 self.checkpoint_network_outputs_and_metrics(
                     step=step,
@@ -138,20 +150,23 @@ class W3DIPTrainer:
                     sharp_volume_ground_truth=sharp_volume_ground_truth,
                     kernel_ground_truth=kernel_ground_truth
                 )
-
+            """
         # Clean up
-        del out_x
-        del out_y
-        del out_k
+        del sharp_img_estimates
+        del blur_kernel_estimate
+        del blurr_img_estimates
         torch.cuda.empty_cache()
 
     def _record_baseline_metrics(self, blurred_volume, sharp_volume_ground_truth):
         # Calculate SSIM
-        self.baseline_blurr_to_gt_metrics['ssim'] = ssim(blurred_volume, sharp_volume_ground_truth).item()
+        self.baseline_blurr_to_gt_metrics['ssim'].append(
+            ssim(blurred_volume, sharp_volume_ground_truth).item())
         # Calculate PSNR
-        self.baseline_blurr_to_gt_metrics['psnr'] = peak_signal_noise_ratio(blurred_volume, sharp_volume_ground_truth).item()
+        self.baseline_blurr_to_gt_metrics['psnr'].append(
+            peak_signal_noise_ratio(blurred_volume, sharp_volume_ground_truth).item())
         # Calculate MSE
-        self.baseline_blurr_to_gt_metrics['mse'] = mean_squared_error(blurred_volume, sharp_volume_ground_truth).item()
+        self.baseline_blurr_to_gt_metrics['mse'].append(
+            mean_squared_error(blurred_volume, sharp_volume_ground_truth).item())
 
     def _record_sharp_vol_estimation_metrics(self, sharp_volume_estimate, sharp_volume_ground_truth, step):
         self.image_estimate_metrics['step'].append(step)
