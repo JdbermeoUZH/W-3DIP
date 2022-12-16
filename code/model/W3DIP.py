@@ -44,7 +44,7 @@ class W3DIPMultiPatch(nn.Module):
             num_patches_to_fit: int,
             kernel_gen: KernelGenerator
     ):
-        super(W3DIPMultiPatch).__init__()
+        super(W3DIPMultiPatch, self).__init__()
         self.kernel_gen = kernel_gen
         self.image_generators = []
 
@@ -58,13 +58,14 @@ class W3DIPMultiPatch(nn.Module):
                 )
             )
 
-    def forward(self) -> Tuple[Tuple[torch.FloatTensor], torch.FloatTensor, Tuple[torch.FloatTensor]]:
-        sharp_img_estimates = tuple((image_generator() for image_generator in self.image_generators))
+    def forward(self) -> Tuple[torch.FloatTensor, torch.FloatTensor, torch.FloatTensor]:
+        sharp_img_estimates = torch.cat(tuple(image_generator() for image_generator in self.image_generators))
         blur_kernel_estimate = self.kernel_gen().view(-1, 1, * self.kernel_gen.get_estimated_kernel_size())
-        blurr_img_estimates = tuple((
-            nn.functional.conv3d(sharp_img_estimate, blur_kernel_estimate, padding='same', bias=None)
-            for sharp_img_estimate in sharp_img_estimates
-        ))
+        blurr_img_estimates = torch.cat(
+            tuple(nn.functional.conv3d(sharp_img_estimate, blur_kernel_estimate, padding='same', bias=None)[None, ]
+                  for sharp_img_estimate in sharp_img_estimates
+                  )
+            , 0)
 
         return sharp_img_estimates, blur_kernel_estimate, blurr_img_estimates
 

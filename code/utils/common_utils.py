@@ -23,7 +23,7 @@ def count_parameters(model):
         table.add_row([name, params])
         total_params += params
     print(table)
-    print(f"Total Trainable Params: {total_params}")
+    print(f"Total Trainable Params: {total_params} \n")
     return total_params
 
 

@@ -14,7 +14,7 @@ from utils.common_utils import count_parameters, report_memory_usage, store_volu
 from train.deconv_utils import shifter_kernel
 
 
-class W3DIPTrainer:
+class W3DIPMultiPatchTrainer:
     def __init__(
             self,
             w3dip: W3DIPMultiPatch,
@@ -37,6 +37,7 @@ class W3DIPTrainer:
         }
 
         self.image_estimate_metrics = {
+            'image_name': [],
             'step': [],
             'ssim': [],
             'psnr': [],
@@ -49,6 +50,7 @@ class W3DIPTrainer:
         }
 
         self.baseline_blurr_to_gt_metrics = {
+            'image_name': [],
             'ssim': [],
             'psnr': [],
             'mse': []
@@ -75,7 +77,8 @@ class W3DIPTrainer:
     def fit_no_guidance(
             self,
             blurred_volumes: Tuple[torch.FloatTensor],
-            sharp_volumes_ground_truth: Optional[Tuple[torch.FloatTensor]]= None,
+            blurred_volume_names: Tuple[str, ...],
+            sharp_volumes_ground_truth: Optional[Tuple[torch.FloatTensor]] = None,
             kernel_ground_truth: Optional[torch.FloatTensor] = None,
             num_steps: int = 5000,
             mse_to_ssim_step: int = 1000,
@@ -88,7 +91,11 @@ class W3DIPTrainer:
         report_memory_usage(things_in_gpu="Model", print_anyways=True)
 
         # Report model summary
-        count_parameters(self.w3dip)
+        print('Kernel Generating Network')
+        count_parameters(self.w3dip.kernel_gen)
+
+        print('Image Generating Network')
+        count_parameters(self.w3dip.image_generators[0])
 
         # Initialization for outer-loop
         save_frequency_schedule_loop = list(checkpoint_schedule)
@@ -96,9 +103,11 @@ class W3DIPTrainer:
 
         # Record baseline metrics
         if sharp_volumes_ground_truth is not None and len(sharp_volumes_ground_truth) > 0:
-            for blurred_volume, sharp_volume_ground_truth in zip(blurred_volumes, sharp_volumes_ground_truth):
-                self._record_baseline_metrics(blurred_volume, sharp_volume_ground_truth)
+            for blurred_volume_name, blurred_volume, sharp_volume_ground_truth \
+                    in zip(blurred_volume_names, blurred_volumes, sharp_volumes_ground_truth):
+                self._record_baseline_metrics(blurred_volume_name, blurred_volume, sharp_volume_ground_truth)
 
+        # Start training loop
         for step in tqdm(range(num_steps)):
             # Forward pass
             sharp_img_estimates, blur_kernel_estimate, blurr_img_estimates = self.w3dip()
@@ -110,14 +119,8 @@ class W3DIPTrainer:
             l2_reg = self.w_k * l2_regularization(blur_kernel_estimate)
 
             # Average data fitting terms of all patches
-            data_fitting_term = None
-            for i, (blurr_img_estimate, blurred_volume) in enumerate(zip(blurr_img_estimates, blurred_volumes)):
-                data_fitting_term_i = self.mse(blurr_img_estimate, blurred_volume[None, ]) if step < mse_to_ssim_step else \
-                    1 - self.ssim(blurr_img_estimate, blurred_volume[None, ])
-                if i == 0:
-                    data_fitting_term = data_fitting_term_i
-                else:
-                    data_fitting_term += data_fitting_term_i
+            data_fitting_term = self.mse(blurr_img_estimates, blurred_volumes) if step < mse_to_ssim_step else \
+                1 - self.ssim(blurr_img_estimates, blurred_volumes)
 
             data_fitting_term = data_fitting_term / len(blurr_img_estimates)
 
@@ -157,13 +160,18 @@ class W3DIPTrainer:
         del blurr_img_estimates
         torch.cuda.empty_cache()
 
-    def _record_baseline_metrics(self, blurred_volume, sharp_volume_ground_truth):
+    def _record_baseline_metrics(self, blurred_volume_name, blurred_volume, sharp_volume_ground_truth):
+        # Add image name for which we are calculating the baseline metrics
+        self.baseline_blurr_to_gt_metrics['image_name'].append(blurred_volume_name)
+
         # Calculate SSIM
         self.baseline_blurr_to_gt_metrics['ssim'].append(
             ssim(blurred_volume, sharp_volume_ground_truth).item())
+
         # Calculate PSNR
         self.baseline_blurr_to_gt_metrics['psnr'].append(
             peak_signal_noise_ratio(blurred_volume, sharp_volume_ground_truth).item())
+
         # Calculate MSE
         self.baseline_blurr_to_gt_metrics['mse'].append(
             mean_squared_error(blurred_volume, sharp_volume_ground_truth).item())

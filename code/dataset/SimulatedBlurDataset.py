@@ -54,17 +54,70 @@ class SimulatedBlurDatasetSinglePatch(NibDataset):
         return (ground_truth_vol_name, ground_truth_vol), blurred_volumes
 
 
+class SimulatedBlurDatasetMultiPatch(NibDataset):
+    def __init__(
+            self,
+            input_volume_dir: str,
+            kernels_dir: str,
+            transform=None,
+            device: Union[str, torch.device] = None,
+            dtype: Type[np.dtype] = np.float32,
+            noiseless_blurring: bool = True
+    ):
+        super(SimulatedBlurDatasetMultiPatch, self).__init__(input_volume_dir, transform, device, dtype)
+        self.kernels_filepaths = glob.glob(os.path.join(kernels_dir, "*.npy"))
+        self.blurring_fn = _noiseless_blurring if noiseless_blurring else _poisson_noise_blurring
+
+    def __len__(self):
+        return len(self.kernels_filepaths)
+
+    def __getitem__(self, idx: int) -> Tuple[Tuple[str, torch.FloatTensor], List[Tuple[str, torch.FloatTensor, torch.FloatTensor]]]:
+        # Get the kernel to use
+        kernel_file_path = self.kernels_filepaths[idx]
+        kernel_name = os.path.basename(kernel_file_path).strip('.npy')
+        blur_kernel = np_to_torch(np.load(kernel_file_path)).to(self.device)
+
+        # Get ground_truth volumes
+        ground_truth_vol_names = [os.path.basename(input_volume_filepath).strip('.nii.gz')
+                                 for input_volume_filepath in self.input_volume_filepaths]
+
+
+        ground_truth_volumes = torch.stack(
+            [np_to_torch(nib.load(input_volume_filepath).get_fdata(dtype=self.dtype)).to(self.device)
+             for input_volume_filepath in self.input_volume_filepaths])
+
+        # Get blurred volumes
+        blurred_volumes = self.blurring_fn(ground_truth_volumes.float(), torch.unsqueeze(blur_kernel, dim=0)
+                                           .float()).to(self.device)
+
+        return ground_truth_vol_names, ground_truth_volumes, kernel_name, blur_kernel, blurred_volumes
+
+
 if __name__ == '__main__':
     exp_dir = os.path.join('..', '..', '..', 'experiments', 'noiseless_kernels', 'random_patches_same_volume')
 
     # Let's test if the loading works
-    w3dip_dataset = SimulatedBlurDatasetSinglePatch(
+    w3dip_dataset_single_patch = SimulatedBlurDatasetSinglePatch(
         input_volume_dir=os.path.join(exp_dir, 'volumes', '64x64x128'),
         kernels_dir=os.path.join(exp_dir, 'kernels'),
         noiseless_blurring=True
     )
 
-    for (ground_truth_volume_name, ground_truth_volume), blurred_volumes in w3dip_dataset:
+    w3dip_dataset_multi_patch = SimulatedBlurDatasetMultiPatch(
+        input_volume_dir=os.path.join(exp_dir, 'volumes', '64x64x128'),
+        kernels_dir=os.path.join(exp_dir, 'kernels'),
+        noiseless_blurring=True
+    )
+
+    for ground_truth_volume_names, ground_truth_volumes, kernel_name, blur_kernel, blurred_volumes in w3dip_dataset_multi_patch:
+        print(ground_truth_volume_names)
+        print(ground_truth_volumes.shape)
+        print(kernel_name)
+        print(blur_kernel)
+        print(blurred_volumes.shape)
+
+
+    for (ground_truth_volume_name, ground_truth_volume), blurred_volumes in w3dip_dataset_single_patch:
         for kernel_name, kernel, blurred_image in blurred_volumes:
             print(ground_truth_volume_name)
             print(kernel_name)

@@ -20,5 +20,5 @@ training:
     wk: 0.001
 
 output:
-  dir: ['..', '..', 'results', 'test']
+  dir: ['..', '..', 'results', 'test_multipatch']
   checkpoint_frequencies: [[50, 25], [250, 100], [1000, 250], [2000, 500]]
