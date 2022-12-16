@@ -18,7 +18,7 @@ def _poisson_noise_blurring(volume: torch.FloatTensor, kernel: torch.FloatTensor
     raise RuntimeError('Not implemented yet')
 
 
-class SimulatedBlurDataset(NibDataset):
+class SimulatedBlurDatasetSinglePatch(NibDataset):
     def __init__(
             self,
             input_volume_dir: str,
@@ -28,13 +28,13 @@ class SimulatedBlurDataset(NibDataset):
             dtype: Type[np.dtype] = np.float32,
             noiseless_blurring: bool = True
     ):
-        super(SimulatedBlurDataset, self).__init__(input_volume_dir, transform, device, dtype)
+        super(SimulatedBlurDatasetSinglePatch, self).__init__(input_volume_dir, transform, device, dtype)
         self.kernels_filepaths = glob.glob(os.path.join(kernels_dir, "*.npy"))
         self.blurring_fn = _noiseless_blurring if noiseless_blurring else _poisson_noise_blurring
 
     def __getitem__(self, idx: int) -> Tuple[Tuple[str, torch.FloatTensor], List[Tuple[str, torch.FloatTensor, torch.FloatTensor]]]:
         # Get ground_truth volume
-        grount_truth_vol = os.path.basename(self.input_volume_filepaths[idx]).strip('.nii.gz')
+        ground_truth_vol_name = os.path.basename(self.input_volume_filepaths[idx]).strip('.nii.gz')
         ground_truth_vol = nib.load(self.input_volume_filepaths[idx])
 
         # Convert image to PyTorch tensor
@@ -51,14 +51,14 @@ class SimulatedBlurDataset(NibDataset):
                 .to(self.device)
             blurred_volumes.append((blur_kernel_name, blur_kernel, blurred_vol))
 
-        return (grount_truth_vol, ground_truth_vol), blurred_volumes
+        return (ground_truth_vol_name, ground_truth_vol), blurred_volumes
 
 
 if __name__ == '__main__':
     exp_dir = os.path.join('..', '..', '..', 'experiments', 'noiseless_kernels', 'random_patches_same_volume')
 
     # Let's test if the loading works
-    w3dip_dataset = SimulatedBlurDataset(
+    w3dip_dataset = SimulatedBlurDatasetSinglePatch(
         input_volume_dir=os.path.join(exp_dir, 'volumes', '64x64x128'),
         kernels_dir=os.path.join(exp_dir, 'kernels'),
         noiseless_blurring=True
