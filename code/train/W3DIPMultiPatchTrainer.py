@@ -80,6 +80,7 @@ class W3DIPMultiPatchTrainer:
             blurred_volume_names: Tuple[str, ...],
             sharp_volumes_ground_truth: Optional[torch.FloatTensor] = None,
             kernel_ground_truth: Optional[torch.FloatTensor] = None,
+            kernel_ground_truth_name: Optional[str] = None,
             num_steps: int = 5000,
             mse_to_ssim_step: int = 1000,
             checkpoint_schedule: tuple = ([50, 25], [250, 100], [1000, 250], [2000, 500]),
@@ -107,6 +108,13 @@ class W3DIPMultiPatchTrainer:
             for blurred_vol_name, blurred_vol, sharp_vol_gt \
                     in zip(blurred_volume_names, blurred_volumes, sharp_volumes_ground_truth):
                 self._record_baseline_metrics(blurred_vol_name, blurred_vol, sharp_vol_gt)
+
+        # Save the kernel that will be used for blurring
+        if kernel_ground_truth is not None:
+            self.checkpoint_kernel_ground_truth(checkpoint_base_dir, kernel_ground_truth, kernel_ground_truth_name)
+
+        # Save the blurred volumes as well
+        self.checkpoint_input_blurred_volumes(blurred_volume_names, blurred_volumes, checkpoint_base_dir)
 
         # Start training loop
         for step in tqdm(range(num_steps)):
@@ -141,7 +149,6 @@ class W3DIPMultiPatchTrainer:
             if step > save_freq_change and len(save_frequency_schedule_loop) > 0:
                 save_freq_change, save_freq = save_frequency_schedule_loop.pop(0)
 
-            # TODO: Make this work for all the patches loaded. Will probably need to add the patches names
             # Save progress of each patch
             if step % save_freq == 0 or step == num_steps - 1:
                 self.checkpoint_net_level_metrics(
@@ -171,6 +178,32 @@ class W3DIPMultiPatchTrainer:
         del blur_kernel_estimate
         del blurr_vol_estimates
         torch.cuda.empty_cache()
+
+    def checkpoint_input_blurred_volumes(self, blurred_volume_names, blurred_volumes, checkpoint_base_dir):
+        for blurred_volume_name, blurred_volume in zip(blurred_volume_names, blurred_volumes):
+            volume_dir = os.path.join(checkpoint_base_dir, blurred_volume_name.strip('.nii.gz'))
+            os.makedirs(volume_dir, exist_ok=True)
+            store_volume_nii_gz(
+                vol_array=blurred_volume[0].cpu().detach().numpy(),
+                volume_filename=blurred_volume_name,
+                output_dir=volume_dir)
+
+    def checkpoint_kernel_ground_truth(self, checkpoint_base_dir, kernel_ground_truth, kernel_ground_truth_name):
+        blurr_kernel_np = kernel_ground_truth[0].cpu().detach().numpy().copy()
+        blurr_kernel_np /= np.max(blurr_kernel_np)
+        # Create dir where the results will be stored
+        kernel_estimate_dir = os.path.join(checkpoint_base_dir, 'kernel_estimate')
+        os.makedirs(kernel_estimate_dir, exist_ok=True)
+        store_volume_nii_gz(
+            vol_array=blurr_kernel_np,
+            volume_filename=f"{kernel_ground_truth_name}.nii.gz",
+            output_dir=kernel_estimate_dir
+        )
+        store_volume_nii_gz(
+            vol_array=(blurr_kernel_np > 0.1).astype(np.uint8),
+            volume_filename=f"{kernel_ground_truth_name}_seg.nii.gz",
+            output_dir=kernel_estimate_dir
+        )
 
     def _record_baseline_metrics(self, blurred_volume_name, blurred_volume, sharp_volume_ground_truth):
         # Add image name for which we are calculating the baseline metrics
@@ -244,19 +277,19 @@ class W3DIPMultiPatchTrainer:
 
     def checkpoint_loss(self, output_dir: str):
         # Store loss history
-        pd.DataFrame(self.loss_history).to_csv(os.path.join(output_dir, 'loss_history.csv'))
+        pd.DataFrame(self.loss_history).to_csv(os.path.join(output_dir, 'loss_history.csv'), index=False)
 
-    def checkpoint_sharp_volume_estimation_metrics(self, output_dir: str):
-        pd.DataFrame(self.image_estimate_metrics).to_csv(
-            os.path.join(output_dir, 'sharp_volume_estimate_metrics.csv'))
+    def checkpoint_sharp_volume_estimation_metrics(self, output_dir: str, vol_name: str):
+        pd.DataFrame(self.image_estimate_metrics).set_index('image_name').sort_index().loc[vol_name].to_csv(
+            os.path.join(output_dir, 'sharp_volume_estimate_metrics.csv'), index=False)
 
     def checkpoint_kernel_estimation_metrics(self, output_dir: str):
         pd.DataFrame(self.kernel_estimate_metrics).to_csv(
-            os.path.join(output_dir, 'kernel_estimate_metrics.csv'))
+            os.path.join(output_dir, 'kernel_estimate_metrics.csv'), index=False)
 
     def checkpoint_bare_baseline_metrics(self, output_dir: str):
-        pd.Series(self.baseline_blurr_to_gt_metrics).to_csv(
-            os.path.join(output_dir, 'baseline_blurr_to_gt_metrics.csv'))
+        pd.DataFrame(self.baseline_blurr_to_gt_metrics).to_csv(
+            os.path.join(output_dir, 'baseline_blurr_to_gt_metrics.csv'), index=False)
 
     def checkpoint_net_level_metrics(
             self,
@@ -307,7 +340,7 @@ class W3DIPMultiPatchTrainer:
         if sharp_volume_ground_truth is not None:
             self._record_sharp_vol_estimation_metrics(
                 sharpened_vol_estimate, sharp_volume_ground_truth, step, blurred_vol_name)
-            self.checkpoint_sharp_volume_estimation_metrics(output_dir=vol_output_dir)
+            self.checkpoint_sharp_volume_estimation_metrics(vol_name=blurred_vol_name, output_dir=vol_output_dir)
 
         # Store outputs
         store_volume_nii_gz(

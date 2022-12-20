@@ -39,55 +39,47 @@ def parse_arguments_and_load_config_file() -> Tuple[argparse.Namespace, dict]:
     return arguments, yaml_config_params
 
 
-def plot_figures_store_metrics(metrics_):
-    # Wrange the metrics logged into a dataframe
-    dataframes = []
-    baseline_df_list = []
-    for vol_name, metrics_of_different_kernels in metrics_.items():
-        for kernel_type, metrics_per_kernel in metrics_of_different_kernels.items():
-            sharp_image_metrics_df = pd.DataFrame(metrics_per_kernel['sharp_volume_estimation']) \
-                .set_index('step')
-            kernel_metrics = pd.DataFrame(metrics_per_kernel['kernel_estimation']) \
-                .set_index('step')
-            sharp_image_metrics_df = sharp_image_metrics_df.join(kernel_metrics.mse.rename('kernel_mse'))
-            sharp_image_metrics_df['vol_name'] = vol_name
-            sharp_image_metrics_df['kernel_type'] = kernel_type
-            sharp_image_metrics_df = sharp_image_metrics_df.reset_index().set_index(['vol_name', 'kernel_type', 'step'])
-            dataframes.append(sharp_image_metrics_df)
+def plot_figures_store_metrics(metrics_, base_output_dir_):
+    # Wrangle the metrics logged into a dataframe
+    for kernel_type, metrics_per_kernel in metrics_.items():
+        output_dir_ = os.path.join(base_output_dir_, kernel_type)
+        sharp_image_metrics_df = pd.DataFrame(metrics_per_kernel['sharp_volume_estimation'])\
+            .set_index(['image_name', 'step']).sort_index()
 
-            baseline_df_list.append({'vol_name': vol_name, 'kernel_type': kernel_type} | metrics_per_kernel['baseline'])
+        sharp_image_metrics_df.to_csv(os.path.join(output_dir_, 'consolidated_performance_accross_experiments.csv'))
 
-    # Store the model metrics and baseline performance metrics
-    results_df = pd.concat(dataframes)
-    results_df.to_csv(os.path.join(base_output_dir, 'consolidated_performance_accross_experiments.csv'))
+        kernel_metrics_df = pd.DataFrame(metrics_per_kernel['kernel_estimation']).set_index('step').sort_index()
 
-    baselines_df = pd.DataFrame(baseline_df_list).set_index('vol_name').sort_index()
-    baselines_df.to_csv(os.path.join(base_output_dir, 'baseline_performance_across_experiments.csv'))
-    kernel_names = [kernel_name_ for kernel_name_ in results_df.index.get_level_values(1).drop_duplicates()]
+        baseline_df = pd.DataFrame(metrics_per_kernel['baseline']).set_index('image_name').sort_index()
 
-    max_steps = results_df.index.get_level_values(2).max()
+        max_steps = sharp_image_metrics_df.index.get_level_values(1).max()
 
-    # Generate plots
-    for kernel in kernel_names:
-        for metric in results_df.columns:
-            results_df.sort_index().loc[(slice(None), slice(kernel)), :].reset_index() \
-                .pivot_table(index='step', columns='vol_name', values=[metric]) \
+        # Generate plots for the sharp image estimates
+        for metric in sharp_image_metrics_df.columns:
+            sharp_image_metrics_df.reset_index() \
+                .pivot_table(index='step', columns='image_name', values=[metric]) \
                 .plot(figsize=(10, 5), logy=True, ylabel=metric,
-                      title=f"Performance for the {kernel} kernel: Estimated Sharp Volume")
+                      title=f"Sharp volume {metric}: Performance for the kernel {kernel_type}")
 
             colors = [line.get_color() for line in plt.gca().lines]
 
             plt.vlines(x=mse_to_ssim_step, ymin=0,
-                       ymax=results_df.sort_index().loc[(slice(None), slice(kernel)), metric].max(),
+                       ymax=sharp_image_metrics_df.loc[:, metric].max(),
                        linestyle='--')
 
-            if metric != 'kernel_mse':
-                print(metric)
-                for i, (img_name, value) in enumerate(baselines_df[baselines_df.kernel_type == kernel][metric].items()):
-                    print(img_name)
-                    plt.hlines(y=value, xmin=0, xmax=max_steps, linestyle='--', alpha=0.55, color=colors[i])
+            for i, (img_name, value) in enumerate(baseline_df[metric].items()):
+                plt.hlines(y=value, xmin=0, xmax=max_steps, linestyle='--', alpha=0.55, color=colors[i])
 
-            plt.savefig(os.path.join(base_output_dir, f'performance_{metric}_w_kernel_{kernel}.jpg'))
+            plt.savefig(
+                os.path.join(output_dir_, f'Sharp volume {metric}: Performance for the kernel {kernel_type}.jpg'))
+            plt.close()
+
+        # Generate plots for the kernel estimates
+        kernel_metrics_df.mse.plot(figsize=(10, 5), logy=True, ylabel='mse',
+                                   title=f"Kernel MSE: Performance for the kernel {kernel_type}")
+        plt.vlines(x=mse_to_ssim_step, ymin=0, ymax=kernel_metrics_df.mse.max(), linestyle='--')
+        plt.savefig(os.path.join(output_dir_, f'Kernel MSE: Performance for the kernel {kernel_type}.jpg'))
+        plt.close()
 
 
 if __name__ == '__main__':
@@ -124,6 +116,8 @@ if __name__ == '__main__':
 
     metrics = {}
     for ground_truth_volume_names, ground_truth_volumes, blurring_kernel_name, blurr_kernel, blurred_volumes in dataset:
+        metrics[blurring_kernel_name] = {}
+
         report_image_name_str = f"Running W3DIP for kernel : {blurring_kernel_name}"
         print(f"{report_image_name_str}\n{len(report_image_name_str) * '#'}")
 
@@ -148,42 +142,15 @@ if __name__ == '__main__':
                 volume_filename=f"{ground_truth_volume_name}.nii.gz",
                 output_dir=ground_truth_output_dir)
 
-            metrics[ground_truth_volume_name] = {}
-
         target_patch_spatial_size = tuple(ground_truth_volumes.size()[2:])
-
-        # TODO: Refactor these so they are in the trainer
-        # Save the kernel that will be used for blurring
-        blurr_kernel_np = blurr_kernel[0].cpu().detach().numpy().copy()
-        blurr_kernel_np /= np.max(blurr_kernel_np)
 
         # Create dir where the results will be stored
         output_dir = os.path.join(
             ground_truth_output_dir,
             blurring_kernel_name
         )
-        os.makedirs(output_dir, exist_ok=True)
-
-        store_volume_nii_gz(
-            vol_array=blurr_kernel_np,
-            volume_filename=f"{blurring_kernel_name}.nii.gz",
-            output_dir=output_dir
-        )
-
-        store_volume_nii_gz(
-            vol_array=(blurr_kernel_np > 0.1).astype(np.uint8),
-            volume_filename=f"{blurring_kernel_name}_seg.nii.gz",
-            output_dir=output_dir
-        )
-
-        # Save the blurred volumes as well
-        blurred_volume_names = tuple(f"blured_{ground_truth_volume_name}.nii.gz"
+        blurred_volume_names = tuple(f"blurred_{ground_truth_volume_name}.nii.gz"
                                      for ground_truth_volume_name in ground_truth_volume_names)
-        for blurred_volume_name, blurred_volume in zip(blurred_volume_names, blurred_volumes):
-            store_volume_nii_gz(
-                    vol_array=blurred_volume[0].cpu().detach().numpy(),
-                    volume_filename=blurred_volume_name,
-                    output_dir=output_dir)
 
         # Define model
         w3dip = W3DIPMultiPatch(
@@ -214,17 +181,18 @@ if __name__ == '__main__':
             blurred_volume_names=blurred_volume_names,
             sharp_volumes_ground_truth=ground_truth_volumes,
             kernel_ground_truth=blurr_kernel,
+            kernel_ground_truth_name=blurring_kernel_name,
             num_steps=num_iter,
             mse_to_ssim_step=mse_to_ssim_step,
             checkpoint_schedule=save_frequency_schedule,
             checkpoint_base_dir=output_dir
         )
 
-        for ground_truth_volume_name in ground_truth_volume_names:
-            metrics[ground_truth_volume_name][blurring_kernel_name] = {
+        # TODO: Refactor aggregation and plotting, they probably no longer work
+        metrics[blurring_kernel_name] = {
                 'sharp_volume_estimation': trainer.image_estimate_metrics,
                 'kernel_estimation': trainer.kernel_estimate_metrics,
                 'baseline': trainer.baseline_blurr_to_gt_metrics
-            }
+        }
 
-    plot_figures_store_metrics(metrics)
+    plot_figures_store_metrics(metrics, ground_truth_output_dir)
