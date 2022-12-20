@@ -76,9 +76,9 @@ class W3DIPMultiPatchTrainer:
 
     def fit_no_guidance(
             self,
-            blurred_volumes: Tuple[torch.FloatTensor],
+            blurred_volumes: torch.FloatTensor,
             blurred_volume_names: Tuple[str, ...],
-            sharp_volumes_ground_truth: Optional[Tuple[torch.FloatTensor]] = None,
+            sharp_volumes_ground_truth: Optional[torch.FloatTensor] = None,
             kernel_ground_truth: Optional[torch.FloatTensor] = None,
             num_steps: int = 5000,
             mse_to_ssim_step: int = 1000,
@@ -102,15 +102,16 @@ class W3DIPMultiPatchTrainer:
         save_freq_change, save_freq = save_frequency_schedule_loop.pop(0)
 
         # Record baseline metrics
-        if sharp_volumes_ground_truth is not None and len(sharp_volumes_ground_truth) > 0:
-            for blurred_volume_name, blurred_volume, sharp_volume_ground_truth \
+        if sharp_volumes_ground_truth is not None and sharp_volumes_ground_truth.shape[0] > 0:
+
+            for blurred_vol_name, blurred_vol, sharp_vol_gt \
                     in zip(blurred_volume_names, blurred_volumes, sharp_volumes_ground_truth):
-                self._record_baseline_metrics(blurred_volume_name, blurred_volume, sharp_volume_ground_truth)
+                self._record_baseline_metrics(blurred_vol_name, blurred_vol, sharp_vol_gt)
 
         # Start training loop
         for step in tqdm(range(num_steps)):
             # Forward pass
-            sharp_img_estimates, blur_kernel_estimate, blurr_img_estimates = self.w3dip()
+            sharp_vol_estimates, blur_kernel_estimate, blurr_vol_estimates = self.w3dip()
 
             if check_memory_usage:
                 report_memory_usage(things_in_gpu="Model and Maps")
@@ -119,10 +120,10 @@ class W3DIPMultiPatchTrainer:
             l2_reg = self.w_k * l2_regularization(blur_kernel_estimate)
 
             # Average data fitting terms of all patches
-            data_fitting_term = self.mse(blurr_img_estimates, blurred_volumes) if step < mse_to_ssim_step else \
-                1 - self.ssim(blurr_img_estimates, blurred_volumes)
+            data_fitting_term = self.mse(blurr_vol_estimates, blurred_volumes) if step < mse_to_ssim_step else \
+                1 - self.ssim(blurr_vol_estimates, blurred_volumes)
 
-            data_fitting_term = data_fitting_term / len(blurr_img_estimates)
+            data_fitting_term = data_fitting_term / len(blurr_vol_estimates)
 
             loss = l2_reg + data_fitting_term
 
@@ -141,23 +142,34 @@ class W3DIPMultiPatchTrainer:
                 save_freq_change, save_freq = save_frequency_schedule_loop.pop(0)
 
             # TODO: Make this work for all the patches loaded. Will probably need to add the patches names
-            """
+            # Save progress of each patch
             if step % save_freq == 0 or step == num_steps - 1:
-                self.checkpoint_network_outputs_and_metrics(
+                self.checkpoint_net_level_metrics(
                     step=step,
-                    blurred_vol_estimate=out_y[0, 0],
-                    sharpened_vol_estimate=out_x[0, 0],
-                    kernel_estimate=out_k[0, 0],
-                    output_dir=checkpoint_base_dir,
+                    kernel_estimate=blur_kernel_estimate,
+                    base_output_dir=checkpoint_base_dir,
                     patch_filename=f'step_{step}',
-                    sharp_volume_ground_truth=sharp_volume_ground_truth,
-                    kernel_ground_truth=kernel_ground_truth
+                    kernel_ground_truth=kernel_ground_truth,
                 )
-            """
+
+                for blur_vol_est, sharp_vol_est, blurred_vol_name, blurred_vol, sharp_vol_gt \
+                        in zip(blurr_vol_estimates, sharp_vol_estimates, blurred_volume_names,
+                               blurred_volumes, sharp_volumes_ground_truth):
+
+                    self.checkpoint_vol_level_outputs_and_metrics(
+                        step=step,
+                        blurred_vol_estimate=blur_vol_est,
+                        sharpened_vol_estimate=sharp_vol_est,
+                        base_output_dir=checkpoint_base_dir,
+                        patch_filename=f'step_{step}',
+                        sharp_volume_ground_truth=sharp_vol_gt,
+                        blurred_vol_name=blurred_vol_name
+                    )
+
         # Clean up
-        del sharp_img_estimates
+        del sharp_vol_estimates
         del blur_kernel_estimate
-        del blurr_img_estimates
+        del blurr_vol_estimates
         torch.cuda.empty_cache()
 
     def _record_baseline_metrics(self, blurred_volume_name, blurred_volume, sharp_volume_ground_truth):
@@ -176,20 +188,22 @@ class W3DIPMultiPatchTrainer:
         self.baseline_blurr_to_gt_metrics['mse'].append(
             mean_squared_error(blurred_volume, sharp_volume_ground_truth).item())
 
-    def _record_sharp_vol_estimation_metrics(self, sharp_volume_estimate, sharp_volume_ground_truth, step):
+    def _record_sharp_vol_estimation_metrics(self, sharp_volume_estimate, sharp_volume_ground_truth, step, vol_name):
+        self.image_estimate_metrics['image_name'].append(vol_name)
+
         self.image_estimate_metrics['step'].append(step)
 
         # Calculate SSIM
         self.image_estimate_metrics['ssim'].append(
-            ssim(sharp_volume_estimate[None], sharp_volume_ground_truth).item())
+            ssim(sharp_volume_estimate, sharp_volume_ground_truth).item())
 
         # Calculate PSNR
         self.image_estimate_metrics['psnr'].append(
-            peak_signal_noise_ratio(sharp_volume_estimate[None], sharp_volume_ground_truth).item())
+            peak_signal_noise_ratio(sharp_volume_estimate, sharp_volume_ground_truth).item())
 
         # Calculate MSE
         self.image_estimate_metrics['mse'].append(
-            mean_squared_error(sharp_volume_estimate[None], sharp_volume_ground_truth).item())
+            mean_squared_error(sharp_volume_estimate, sharp_volume_ground_truth).item())
 
     def _record_kernel_estimation_error_metrics(self, kernel_estimate, kernel_ground_truth, step, step_output_dir):
         # Find most likely translation by choosing the one with the lowest MSE
@@ -206,12 +220,12 @@ class W3DIPMultiPatchTrainer:
         kernel_ground_truth_max_overlap /= np.max(kernel_ground_truth_max_overlap)
 
         store_volume_nii_gz(
-            vol_array=kernel_ground_truth_max_overlap,
+            vol_array=kernel_ground_truth_max_overlap[0],
             volume_filename=f"kernel_ground_truth_max_overlap.nii.gz",
             output_dir=step_output_dir)
 
         store_volume_nii_gz(
-            vol_array=(kernel_ground_truth_max_overlap > 0.1).astype(np.uint8),
+            vol_array=(kernel_ground_truth_max_overlap[0] > 0.1).astype(np.uint8),
             volume_filename=f"kernel_ground_truth_max_overlap_seg_mask_0.1_threshold.nii.gz",
             output_dir=step_output_dir)
 
@@ -244,53 +258,68 @@ class W3DIPMultiPatchTrainer:
         pd.Series(self.baseline_blurr_to_gt_metrics).to_csv(
             os.path.join(output_dir, 'baseline_blurr_to_gt_metrics.csv'))
 
-    def checkpoint_network_outputs_and_metrics(
+    def checkpoint_net_level_metrics(
             self,
             step: int,
-            blurred_vol_estimate: Union[torch.cuda.FloatTensor, torch.Tensor],
-            sharpened_vol_estimate: Union[torch.cuda.FloatTensor, torch.Tensor],
             kernel_estimate: Union[torch.cuda.FloatTensor, torch.Tensor],
-            output_dir: str, patch_filename: str,
-            sharp_volume_ground_truth: Optional[torch.FloatTensor] = None,
-            kernel_ground_truth: Optional[torch.FloatTensor] = None
+            base_output_dir: str, patch_filename: str,
+            kernel_ground_truth: Optional[torch.FloatTensor] = None,
     ):
-        step_output_dir = os.path.join(output_dir, f'step_{step}')
+        self.checkpoint_loss(base_output_dir)
+
+        self.checkpoint_bare_baseline_metrics(output_dir=base_output_dir)
+
+        step_output_dir = os.path.join(base_output_dir, 'kernel_estimate', f'step_{step}')
         os.makedirs(step_output_dir, exist_ok=True)
-
-        # Record metrics
-        self.checkpoint_loss(output_dir=output_dir)
-
-        if sharp_volume_ground_truth is not None:
-            self._record_sharp_vol_estimation_metrics(sharpened_vol_estimate, sharp_volume_ground_truth, step)
-            self.checkpoint_sharp_volume_estimation_metrics(output_dir=output_dir)
-            self.checkpoint_bare_baseline_metrics(output_dir=output_dir)
 
         if kernel_ground_truth is not None:
             self._record_kernel_estimation_error_metrics(kernel_estimate, kernel_ground_truth, step, step_output_dir)
-            self.checkpoint_kernel_estimation_metrics(output_dir=output_dir)
-
-        # Store outputs
-        store_volume_nii_gz(
-            vol_array=blurred_vol_estimate.cpu().detach().numpy(),
-            volume_filename=f"blurred_vol_estimate__{patch_filename}.nii.gz",
-            output_dir=step_output_dir)
-
-        store_volume_nii_gz(
-            vol_array=sharpened_vol_estimate.cpu().detach().numpy(),
-            volume_filename=f"sharpened_vol_estimate__{patch_filename}.nii.gz",
-            output_dir=step_output_dir)
+            self.checkpoint_kernel_estimation_metrics(output_dir=base_output_dir)
 
         kernel_estimate = kernel_estimate.cpu().detach().numpy().copy()
         kernel_estimate /= np.max(kernel_estimate)
         store_volume_nii_gz(
-            vol_array=kernel_estimate,
+            vol_array=kernel_estimate[0],
             volume_filename=f"kernel_estimate__{patch_filename}.nii.gz",
             output_dir=step_output_dir)
 
         store_volume_nii_gz(
-            vol_array=(kernel_estimate > 0.1).astype(np.uint8),
+            vol_array=(kernel_estimate[0] > 0.1).astype(np.uint8),
             volume_filename=f"kernel_estimate_seg_mask_0.1_threshold__{patch_filename}.nii.gz",
             output_dir=step_output_dir)
+
+    def checkpoint_vol_level_outputs_and_metrics(
+            self,
+            step: int,
+            blurred_vol_estimate: Union[torch.cuda.FloatTensor, torch.Tensor],
+            sharpened_vol_estimate: Union[torch.cuda.FloatTensor, torch.Tensor],
+            blurred_vol_name: str,
+            base_output_dir: str, patch_filename: str,
+            sharp_volume_ground_truth: Optional[torch.FloatTensor] = None,
+    ):
+        vol_output_dir = os.path.join(base_output_dir, blurred_vol_name.strip('.nii.gz'))
+        os.makedirs(vol_output_dir, exist_ok=True)
+
+        step_output_dir = os.path.join(vol_output_dir, f'step_{step}')
+        os.makedirs(step_output_dir, exist_ok=True)
+
+        # Record metrics
+        if sharp_volume_ground_truth is not None:
+            self._record_sharp_vol_estimation_metrics(
+                sharpened_vol_estimate, sharp_volume_ground_truth, step, blurred_vol_name)
+            self.checkpoint_sharp_volume_estimation_metrics(output_dir=vol_output_dir)
+
+        # Store outputs
+        store_volume_nii_gz(
+            vol_array=blurred_vol_estimate[0].cpu().detach().numpy(),
+            volume_filename=f"blurred_vol_estimate__{patch_filename}.nii.gz",
+            output_dir=step_output_dir)
+
+        store_volume_nii_gz(
+            vol_array=sharpened_vol_estimate[0].cpu().detach().numpy(),
+            volume_filename=f"sharpened_vol_estimate__{patch_filename}.nii.gz",
+            output_dir=step_output_dir)
+
 
 
 

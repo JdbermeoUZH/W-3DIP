@@ -72,6 +72,7 @@ class W3DIPMultiPatch(nn.Module):
     def to_device(self, device: torch.device):
         for image_generator in self.image_generators:
             image_generator.input_noise.to_device(device)
+            image_generator.to(device)
         self.kernel_gen.input_noise.to_device(device)
         self.to(device)
 

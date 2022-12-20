@@ -142,6 +142,7 @@ if __name__ == '__main__':
         os.makedirs(ground_truth_output_dir, exist_ok=True)
 
         for ground_truth_volume_name, ground_truth_volume in zip(ground_truth_volume_names, ground_truth_volumes):
+
             store_volume_nii_gz(
                 vol_array=ground_truth_volume[0].cpu().detach().numpy(),
                 volume_filename=f"{ground_truth_volume_name}.nii.gz",
@@ -151,6 +152,7 @@ if __name__ == '__main__':
 
         target_patch_spatial_size = tuple(ground_truth_volumes.size()[2:])
 
+        # TODO: Refactor these so they are in the trainer
         # Save the kernel that will be used for blurring
         blurr_kernel_np = blurr_kernel[0].cpu().detach().numpy().copy()
         blurr_kernel_np /= np.max(blurr_kernel_np)
@@ -196,6 +198,7 @@ if __name__ == '__main__':
                 estimated_kernel_shape=kernel_size_estimate
             )
         )
+        w3dip.to_device(device)
 
         trainer = W3DIPMultiPatchTrainer(
                 w3dip=w3dip,
