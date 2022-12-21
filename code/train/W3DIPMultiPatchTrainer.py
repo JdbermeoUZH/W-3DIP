@@ -312,12 +312,12 @@ class W3DIPMultiPatchTrainer:
         kernel_estimate = kernel_estimate.cpu().detach().numpy().copy()
         kernel_estimate /= np.max(kernel_estimate)
         store_volume_nii_gz(
-            vol_array=kernel_estimate[0],
+            vol_array=kernel_estimate[0, 0],
             volume_filename=f"kernel_estimate__{patch_filename}.nii.gz",
             output_dir=step_output_dir)
 
         store_volume_nii_gz(
-            vol_array=(kernel_estimate[0] > 0.1).astype(np.uint8),
+            vol_array=(kernel_estimate[0, 0] > 0.1).astype(np.uint8),
             volume_filename=f"kernel_estimate_seg_mask_0.1_threshold__{patch_filename}.nii.gz",
             output_dir=step_output_dir)
 
