@@ -1,6 +1,6 @@
 input:
-  input_vols_dir: ["..", "..", "experiments", 'noiseless_kernels', 'random_patches_same_volume', 'volumes', '64x64x128']
-  kernels_dir: ["..", "..", "experiments", 'noiseless_kernels', 'random_patches_same_volume', 'kernels']
+  input_vols_dir: ["..", "..", "experiments", 'noiseless_kernels', 'patches_same_volume_same_z', 'volumes', '64x64x128']
+  kernels_dir: ["..", "..", "experiments", 'noiseless_kernels', 'patches_same_volume_same_z', 'test_kernels']
 
 model_definition:
   image_generator:
@@ -15,7 +15,7 @@ training:
   lr: 0.01
   steps: 10
   mse_to_ssim_step: 1000
-  num_repetitions: 5
+  num_repetitions: 2
 
   loss_fn:
     wk: 0.001

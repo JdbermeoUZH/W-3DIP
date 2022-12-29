@@ -141,7 +141,6 @@ def get_image(path, imsize=-1):
 
 def fill_noise(x, noise_type):
     """Fills tensor `x` with noise of type `noise_type`."""
-    torch.manual_seed(0)
     if noise_type == 'u':
         x.uniform_()
     elif noise_type == 'n':
@@ -340,3 +339,18 @@ def report_memory_usage(things_in_gpu: str, total_memory_threshold: float = 0.4,
 def store_volume_nii_gz(vol_array: np.ndarray, volume_filename: str, output_dir: str):
     nib_img = nib.Nifti1Image(vol_array, np.eye(4))
     nib.save(nib_img, os.path.join(output_dir, volume_filename))
+
+
+def set_seed(seed: int = 123):
+    torch.manual_seed(seed)
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.cuda.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
+
+    # When running on the CuDNN backend, two further options must be set
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
+
+    # Set a fixed value for the hash seed
+    os.environ["PYTHONHASHSEED"] = str(seed)

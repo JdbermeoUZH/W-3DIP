@@ -193,6 +193,7 @@ class W3DIPMultiPatchTrainer:
     def checkpoint_kernel_ground_truth(self, checkpoint_base_dir, kernel_ground_truth, kernel_ground_truth_name):
         blurr_kernel_np = kernel_ground_truth[0].cpu().detach().numpy().copy()
         blurr_kernel_np /= np.max(blurr_kernel_np)
+
         # Create dir where the results will be stored
         kernel_estimate_dir = os.path.join(checkpoint_base_dir, 'kernel_estimate')
         os.makedirs(kernel_estimate_dir, exist_ok=True)

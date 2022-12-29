@@ -1,3 +1,4 @@
+import json
 import os
 import yaml
 import random
@@ -16,17 +17,11 @@ from model.ImageGenerator import ImageGeneratorInterCNN3D
 from model.KernelGenerator import KernelGenerator
 from train.W3DIPMultiPatchTrainer import W3DIPMultiPatchTrainer
 from train.W3DIPTrainer import W3DIPTrainer
-from utils.common_utils import store_volume_nii_gz
+from utils.common_utils import store_volume_nii_gz, set_seed
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 # warnings.filterwarnings("ignore")
-
-
-def set_seed(seed: int = 123):
-    torch.manual_seed(seed)
-    random.seed(seed)
-    np.random.seed(seed)
 
 
 def parse_arguments_and_load_config_file() -> Tuple[argparse.Namespace, dict]:
@@ -155,7 +150,7 @@ if __name__ == '__main__':
                                      for ground_truth_volume_name in ground_truth_volume_names)
 
         for repetition_i in range(train_cfg['num_repetitions']):
-            random_state = random.randint(0, 100)
+            random_state = random.randint(0, 1000)
             set_seed(random_state)
 
             checkpoint_volumes = repetition_i == 0 # Only store volumes of the first iteration
@@ -214,3 +209,42 @@ if __name__ == '__main__':
                 exp_output_dir,
                 blurring_kernel_name
             )
+
+        # TODO: Aggregate result accross seeds for each kernel
+        print("hallo")
+        print('do something with metrics')
+
+        # Concatenate results across experiments with different seeds
+        sharp_volume_estimation_metric_dfs = []
+        kernel_estimation_metric_dfs = []
+        for random_state_exp, metrics_dict in metrics[blurring_kernel_name].items():
+            sharp_vol_metrics_df_i = pd.DataFrame(metrics_dict['sharp_volume_estimation'])
+            sharp_vol_metrics_df_i['exp'] = random_state_exp
+            sharp_vol_metrics_df_i = sharp_vol_metrics_df_i.set_index(['exp', 'image_name', 'step']).sort_index()
+
+            sharp_volume_estimation_metric_dfs.append(sharp_vol_metrics_df_i)
+
+            kernel_metrics_df_i = pd.DataFrame(metrics_dict['kernel_estimation'])
+            kernel_metrics_df_i['exp'] = random_state_exp
+            kernel_metrics_df_i = kernel_metrics_df_i.set_index(['exp', 'step']).sort_index()
+            kernel_estimation_metric_dfs.append(kernel_metrics_df_i)
+
+        sharp_volume_estimation_metric_df = pd.concat(sharp_volume_estimation_metric_dfs)
+        kernel_estimation_metric_df = pd.concat(kernel_estimation_metric_dfs)
+
+        # Calculate mean and standard deviation across experiments
+        sharp_volume_estimation_metric_df = sharp_volume_estimation_metric_df.groupby(level=[1, 2]).agg(
+            [np.mean, np.std, lambda x: np.mean(x) - np.std(x), lambda x: np.mean(x) + np.std(x)]).rename(
+            columns={'<lambda_0>': 'mean_low', '<lambda_1>': 'mean_high'})
+        sharp_volume_estimation_metric_df.columns = sharp_volume_estimation_metric_df.columns.map('_'.join)\
+            .str.strip('_')
+
+        kernel_estimation_metric_df = kernel_estimation_metric_df.groupby(level=[1]).agg(
+            [np.mean, np.std, lambda x: np.mean(x) - np.std(x), lambda x: np.mean(x) + np.std(x)]).rename(
+            columns={'<lambda_0>': 'mean_low', '<lambda_1>': 'mean_high'})
+        kernel_estimation_metric_df.columns = kernel_estimation_metric_df.columns.map('_'.join)\
+            .str.strip('_')
+
+    # Store all metrics calculated
+    json.dump(metrics, open(os.path.join(ground_truth_output_dir, 'exp_metrics.json'), 'w'), indent=4)
+
