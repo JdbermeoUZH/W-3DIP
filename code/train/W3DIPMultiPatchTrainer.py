@@ -85,7 +85,8 @@ class W3DIPMultiPatchTrainer:
             mse_to_ssim_step: int = 1000,
             checkpoint_schedule: tuple = ([50, 25], [250, 100], [1000, 250], [2000, 500]),
             checkpoint_base_dir: str = os.path.join('..', 'results'),
-            check_memory_usage: bool = False
+            check_memory_usage: bool = False,
+            checkpoint_volumes = False
     ):
 
         # Report memory usage
@@ -170,7 +171,8 @@ class W3DIPMultiPatchTrainer:
                         base_output_dir=checkpoint_base_dir,
                         patch_filename=f'step_{step}',
                         sharp_volume_ground_truth=sharp_vol_gt,
-                        blurred_vol_name=blurred_vol_name
+                        blurred_vol_name=blurred_vol_name,
+                        checkpoint_volumes=checkpoint_volumes
                     )
 
         # Clean up
@@ -329,6 +331,7 @@ class W3DIPMultiPatchTrainer:
             blurred_vol_name: str,
             base_output_dir: str, patch_filename: str,
             sharp_volume_ground_truth: Optional[torch.FloatTensor] = None,
+            checkpoint_volumes = False
     ):
         vol_output_dir = os.path.join(base_output_dir, blurred_vol_name.strip('.nii.gz'))
         os.makedirs(vol_output_dir, exist_ok=True)
@@ -342,16 +345,17 @@ class W3DIPMultiPatchTrainer:
                 sharpened_vol_estimate, sharp_volume_ground_truth, step, blurred_vol_name)
             self.checkpoint_sharp_volume_estimation_metrics(vol_name=blurred_vol_name, output_dir=vol_output_dir)
 
-        # Store outputs
-        store_volume_nii_gz(
-            vol_array=blurred_vol_estimate[0].cpu().detach().numpy(),
-            volume_filename=f"blurred_vol_estimate__{patch_filename}.nii.gz",
-            output_dir=step_output_dir)
+        if checkpoint_volumes:
+            # Store outputs
+            store_volume_nii_gz(
+                vol_array=blurred_vol_estimate[0].cpu().detach().numpy(),
+                volume_filename=f"blurred_vol_estimate__{patch_filename}.nii.gz",
+                output_dir=step_output_dir)
 
-        store_volume_nii_gz(
-            vol_array=sharpened_vol_estimate[0].cpu().detach().numpy(),
-            volume_filename=f"sharpened_vol_estimate__{patch_filename}.nii.gz",
-            output_dir=step_output_dir)
+            store_volume_nii_gz(
+                vol_array=sharpened_vol_estimate[0].cpu().detach().numpy(),
+                volume_filename=f"sharpened_vol_estimate__{patch_filename}.nii.gz",
+                output_dir=step_output_dir)
 
 
 

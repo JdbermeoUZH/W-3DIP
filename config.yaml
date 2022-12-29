@@ -13,12 +13,13 @@ model_definition:
 
 training:
   lr: 0.01
-  steps: 2000
+  steps: 10
   mse_to_ssim_step: 1000
+  num_repetitions: 5
 
   loss_fn:
     wk: 0.001
 
 output:
-  dir: ['..', '..', 'results', 'multipatch_local']
+  dir: ['..', '..', 'results', 'test_multipatch_local_multiple_seeds']
   checkpoint_frequencies: [[50, 25], [250, 100], [1000, 250], [2000, 500]]

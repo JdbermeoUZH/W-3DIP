@@ -1,5 +1,6 @@
 import os
 import yaml
+import random
 import argparse
 from typing import Tuple
 
@@ -22,6 +23,12 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 # warnings.filterwarnings("ignore")
 
 
+def set_seed(seed: int = 123):
+    torch.manual_seed(seed)
+    random.seed(seed)
+    np.random.seed(seed)
+
+
 def parse_arguments_and_load_config_file() -> Tuple[argparse.Namespace, dict]:
     parser = argparse.ArgumentParser(description='Subtask-2')
     parser.add_argument('--config_path_yaml', type=str,
@@ -39,46 +46,44 @@ def parse_arguments_and_load_config_file() -> Tuple[argparse.Namespace, dict]:
     return arguments, yaml_config_params
 
 
-def plot_figures_store_metrics(metrics_, base_output_dir_):
+def plot_figures_store_metrics_per_experiment(metrics_per_exp, output_dir_, kenel_name):
     # Wrangle the metrics logged into a dataframe
-    for kernel_type, metrics_per_kernel in metrics_.items():
-        output_dir_ = os.path.join(base_output_dir_, kernel_type)
-        sharp_image_metrics_df = pd.DataFrame(metrics_per_kernel['sharp_volume_estimation'])\
-            .set_index(['image_name', 'step']).sort_index()
+    sharp_image_metrics_df = pd.DataFrame(metrics_per_exp['sharp_volume_estimation'])\
+        .set_index(['image_name', 'step']).sort_index()
 
-        sharp_image_metrics_df.to_csv(os.path.join(output_dir_, 'consolidated_performance_accross_experiments.csv'))
+    sharp_image_metrics_df.to_csv(os.path.join(output_dir_, 'consolidated_performance_accross_experiments.csv'))
 
-        kernel_metrics_df = pd.DataFrame(metrics_per_kernel['kernel_estimation']).set_index('step').sort_index()
+    kernel_metrics_df = pd.DataFrame(metrics_per_exp['kernel_estimation']).set_index('step').sort_index()
 
-        baseline_df = pd.DataFrame(metrics_per_kernel['baseline']).set_index('image_name').sort_index()
+    baseline_df = pd.DataFrame(metrics_per_exp['baseline']).set_index('image_name').sort_index()
 
-        max_steps = sharp_image_metrics_df.index.get_level_values(1).max()
+    max_steps = sharp_image_metrics_df.index.get_level_values(1).max()
 
-        # Generate plots for the sharp image estimates
-        for metric in sharp_image_metrics_df.columns:
-            sharp_image_metrics_df.reset_index() \
-                .pivot_table(index='step', columns='image_name', values=[metric]) \
-                .plot(figsize=(10, 5), logy=True, ylabel=metric,
-                      title=f"Sharp volume {metric}: Performance for the kernel {kernel_type}")
+    # Generate plots for the sharp image estimates
+    for metric in sharp_image_metrics_df.columns:
+        sharp_image_metrics_df.reset_index() \
+            .pivot_table(index='step', columns='image_name', values=[metric]) \
+            .plot(figsize=(10, 5), logy=True, ylabel=metric,
+                  title=f"Sharp volume {metric}: Performance for the kernel {kenel_name}")
 
-            colors = [line.get_color() for line in plt.gca().lines]
+        colors = [line.get_color() for line in plt.gca().lines]
 
-            plt.vlines(x=mse_to_ssim_step, ymin=0,
-                       ymax=sharp_image_metrics_df.loc[:, metric].max(),
-                       linestyle='--')
+        plt.vlines(x=mse_to_ssim_step, ymin=0,
+                   ymax=sharp_image_metrics_df.loc[:, metric].max(),
+                   linestyle='--')
 
-            for i, (img_name, value) in enumerate(baseline_df[metric].items()):
-                plt.hlines(y=value, xmin=0, xmax=max_steps, linestyle='--', alpha=0.55, color=colors[i])
+        for i, (img_name, value) in enumerate(baseline_df[metric].items()):
+            plt.hlines(y=value, xmin=0, xmax=max_steps, linestyle='--', alpha=0.55, color=colors[i])
 
-            plt.savefig(
-                os.path.join(output_dir_, f'Sharp volume {metric}: Performance for the kernel {kernel_type}.jpg'))
-            plt.close()
+        plt.savefig(
+            os.path.join(output_dir_, f'Sharp volume {metric}: Performance for the kernel {kenel_name}.jpg'))
+        plt.close()
 
         # Generate plots for the kernel estimates
         kernel_metrics_df.mse.plot(figsize=(10, 5), logy=True, ylabel='mse',
-                                   title=f"Kernel MSE: Performance for the kernel {kernel_type}")
+                                   title=f"Kernel MSE: Performance for the kernel {kenel_name}")
         plt.vlines(x=mse_to_ssim_step, ymin=0, ymax=kernel_metrics_df.mse.max(), linestyle='--')
-        plt.savefig(os.path.join(output_dir_, f'Kernel MSE: Performance for the kernel {kernel_type}.jpg'))
+        plt.savefig(os.path.join(output_dir_, f'Kernel MSE: Performance for the kernel {kenel_name}.jpg'))
         plt.close()
 
 
@@ -134,7 +139,6 @@ if __name__ == '__main__':
 
         # Save the ground truth volumes
         os.makedirs(ground_truth_output_dir, exist_ok=True)
-
         for ground_truth_volume_name, ground_truth_volume in zip(ground_truth_volume_names, ground_truth_volumes):
 
             store_volume_nii_gz(
@@ -142,57 +146,71 @@ if __name__ == '__main__':
                 volume_filename=f"{ground_truth_volume_name}.nii.gz",
                 output_dir=ground_truth_output_dir)
 
-        target_patch_spatial_size = tuple(ground_truth_volumes.size()[2:])
-
         # Create dir where the results will be stored
-        output_dir = os.path.join(
+        kernel_output_dir = os.path.join(
             ground_truth_output_dir,
             blurring_kernel_name
         )
         blurred_volume_names = tuple(f"blurred_{ground_truth_volume_name}.nii.gz"
                                      for ground_truth_volume_name in ground_truth_volume_names)
 
-        # Define model
-        w3dip = W3DIPMultiPatch(
-            target_patch_spatial_size=target_patch_spatial_size,
-            num_output_channels=target_patches_num_channels,
-            num_feature_maps_unet=interCNN_feature_maps,
-            num_patches_to_fit=num_volumes_to_fit,
+        for repetition_i in range(train_cfg['num_repetitions']):
+            random_state = random.randint(0, 100)
+            set_seed(random_state)
 
-            kernel_gen=KernelGenerator(
-                noise_input_size=kernel_generator_cfg['net_noise_input_size'],
-                num_hidden=kernel_generator_cfg['num_hidden_units'],
-                estimated_kernel_shape=kernel_size_estimate
+            checkpoint_volumes = repetition_i == 0 # Only store volumes of the first iteration
+            exp_output_dir = os.path.join(kernel_output_dir, f'seed_{random_state}')
+            os.makedirs(exp_output_dir, exist_ok=True)
+
+            metrics[blurring_kernel_name][f'seed_{random_state}'] = {}
+
+            # Define model
+            target_patch_spatial_size = tuple(ground_truth_volumes.size()[2:])
+
+            w3dip = W3DIPMultiPatch(
+                target_patch_spatial_size=target_patch_spatial_size,
+                num_output_channels=target_patches_num_channels,
+                num_feature_maps_unet=interCNN_feature_maps,
+                num_patches_to_fit=num_volumes_to_fit,
+
+                kernel_gen=KernelGenerator(
+                    noise_input_size=kernel_generator_cfg['net_noise_input_size'],
+                    num_hidden=kernel_generator_cfg['num_hidden_units'],
+                    estimated_kernel_shape=kernel_size_estimate
+                )
             )
-        )
-        w3dip.to_device(device)
+            w3dip.to_device(device)
 
-        trainer = W3DIPMultiPatchTrainer(
-                w3dip=w3dip,
-                device=device,
-                lr_img_network=LR,
-                lr_kernel_network=1e-4,
-                lr_schedule_params={"milestones": [2000, 3000, 4000], "gamma": 0.5},
-                w_k=wk
-        )
+            trainer = W3DIPMultiPatchTrainer(
+                    w3dip=w3dip,
+                    device=device,
+                    lr_img_network=LR,
+                    lr_kernel_network=1e-4,
+                    lr_schedule_params={"milestones": [2000, 3000, 4000], "gamma": 0.5},
+                    w_k=wk
+            )
 
-        trainer.fit_no_guidance(
-            blurred_volumes=blurred_volumes,
-            blurred_volume_names=blurred_volume_names,
-            sharp_volumes_ground_truth=ground_truth_volumes,
-            kernel_ground_truth=blurr_kernel,
-            kernel_ground_truth_name=blurring_kernel_name,
-            num_steps=num_iter,
-            mse_to_ssim_step=mse_to_ssim_step,
-            checkpoint_schedule=save_frequency_schedule,
-            checkpoint_base_dir=output_dir
-        )
+            trainer.fit_no_guidance(
+                blurred_volumes=blurred_volumes,
+                blurred_volume_names=blurred_volume_names,
+                sharp_volumes_ground_truth=ground_truth_volumes,
+                kernel_ground_truth=blurr_kernel,
+                kernel_ground_truth_name=blurring_kernel_name,
+                num_steps=num_iter,
+                mse_to_ssim_step=mse_to_ssim_step,
+                checkpoint_schedule=save_frequency_schedule,
+                checkpoint_base_dir=exp_output_dir,
+                checkpoint_volumes=checkpoint_volumes
+            )
 
-        # TODO: Refactor aggregation and plotting, they probably no longer work
-        metrics[blurring_kernel_name] = {
-                'sharp_volume_estimation': trainer.image_estimate_metrics,
-                'kernel_estimation': trainer.kernel_estimate_metrics,
-                'baseline': trainer.baseline_blurr_to_gt_metrics
-        }
+            metrics[blurring_kernel_name][f'seed_{random_state}'] = {
+                    'sharp_volume_estimation': trainer.image_estimate_metrics,
+                    'kernel_estimation': trainer.kernel_estimate_metrics,
+                    'baseline': trainer.baseline_blurr_to_gt_metrics
+            }
 
-    plot_figures_store_metrics(metrics, ground_truth_output_dir)
+            plot_figures_store_metrics_per_experiment(
+                metrics[blurring_kernel_name][f'seed_{random_state}'],
+                exp_output_dir,
+                blurring_kernel_name
+            )
