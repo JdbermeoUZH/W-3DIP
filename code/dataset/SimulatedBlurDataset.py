@@ -116,7 +116,6 @@ if __name__ == '__main__':
         print(blur_kernel)
         print(blurred_volumes.shape)
 
-
     for (ground_truth_volume_name, ground_truth_volume), blurred_volumes in w3dip_dataset_single_patch:
         for kernel_name, kernel, blurred_image in blurred_volumes:
             print(ground_truth_volume_name)

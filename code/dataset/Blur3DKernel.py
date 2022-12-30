@@ -167,7 +167,7 @@ if __name__ == "__main__":
     # Broader gaussian Kernel
     broader_gaussian_kernel = test_kernel.create_gaussian_kernel(
         plot_kernel=True,
-        sigma_xyz=(1.5, 1.5, 2.25),
+        sigma_xyz=(1.25, 1.25, 2),
         persist_dir=kernel_dir,
         prefix_str='broader'
     )
@@ -181,16 +181,6 @@ if __name__ == "__main__":
         persist_dir=kernel_dir,
         prefix_str='tilted'
     )
-
-    # larger kernel
-    larger_kernel = Blur3DKernel(kernel_dims_xyz=(10, 10, 20))
-    broader_gaussian_kernel = larger_kernel.create_gaussian_kernel(
-        plot_kernel=True,
-        sigma_xyz=None,
-        persist_dir=kernel_dir,
-        prefix_str='larger'
-    )
-    kernels['broader_gaussian_kernel'] = broader_gaussian_kernel
 
     # Dumbbell kernel
     dumbbell_kernel = test_kernel.create_dumbbell_kernel_z(
