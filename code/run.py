@@ -41,7 +41,8 @@ def parse_arguments_and_load_config_file() -> Tuple[argparse.Namespace, dict]:
     return arguments, yaml_config_params
 
 
-def plot_figures_store_metrics_per_experiment(metrics_per_exp, output_dir_, kenel_name):
+def plot_figures_store_metrics_per_experiment(metrics_per_exp, baseline_metrics, output_dir_, kernel_name,
+                                              mse_to_ssim_step_):
     # Wrangle the metrics logged into a dataframe
     sharp_image_metrics_df = pd.DataFrame(metrics_per_exp['sharp_volume_estimation'])\
         .set_index(['image_name', 'step']).sort_index()
@@ -50,36 +51,180 @@ def plot_figures_store_metrics_per_experiment(metrics_per_exp, output_dir_, kene
 
     kernel_metrics_df = pd.DataFrame(metrics_per_exp['kernel_estimation']).set_index('step').sort_index()
 
-    baseline_df = pd.DataFrame(metrics_per_exp['baseline']).set_index('image_name').sort_index()
+    baseline_df = pd.DataFrame(baseline_metrics).set_index('image_name').sort_index()
 
-    max_steps = sharp_image_metrics_df.index.get_level_values(1).max()
+    plot_volume_performance_per_metric(baseline_df, sharp_image_metrics_df, kernel_name, output_dir_)
+
+    # Generate plots for the kernel estimates
+    plot_kernel_estimate_performance(
+        kernel_metrics_df=kernel_metrics_df, kernel_name=kernel_name, mse_to_ssim_step_=mse_to_ssim_step_,
+        output_dir_=output_dir_, metric_name='mse')
+
+
+def plot_volume_performance_per_metric(
+        baseline_df: pd.DataFrame,
+        sharp_vol_metrics_df: pd.DataFrame,
+        kenel_name: str, output_dir_: str,
+        with_conf_interval: bool = False):
+
+    max_steps = sharp_vol_metrics_df.index.get_level_values(1).max()
+    list_of_metrics = list(set([col.split('_')[0] for col in sharp_vol_metrics_df.columns]))
 
     # Generate plots for the sharp image estimates
-    for metric in sharp_image_metrics_df.columns:
-        sharp_image_metrics_df.reset_index() \
-            .pivot_table(index='step', columns='image_name', values=[metric]) \
-            .plot(figsize=(10, 5), logy=True, ylabel=metric,
-                  title=f"Sharp volume {metric}: Performance for the kernel {kenel_name}")
+    for metric_name in list_of_metrics:
+        y_col = f'{metric_name}_mean' if with_conf_interval else metric_name
+        y_col_max = f'{metric_name}_mean_high' if with_conf_interval else metric_name
+        fig_title = f"Sharp volume {metric_name}: Performance for the kernel {kenel_name}"
+
+        sharp_vol_metrics_df.reset_index() \
+            .pivot_table(index='step', columns='image_name', values=[y_col]) \
+            .plot(figsize=(10, 5), logy=True, ylabel=y_col,
+                  title=fig_title)
 
         colors = [line.get_color() for line in plt.gca().lines]
 
+        # Plot change to ssim loss instead of mse
         plt.vlines(x=mse_to_ssim_step, ymin=0,
-                   ymax=sharp_image_metrics_df.loc[:, metric].max(),
+                   ymax=sharp_vol_metrics_df.loc[:, y_col_max].max(),
                    linestyle='--')
 
-        for i, (img_name, value) in enumerate(baseline_df[metric].items()):
+        for i, (img_name, value) in enumerate(baseline_df[metric_name].items()):
+            # Plot baselines
             plt.hlines(y=value, xmin=0, xmax=max_steps, linestyle='--', alpha=0.55, color=colors[i])
 
+            if with_conf_interval:
+                # Plot confidence intervals
+                sharp_vol_i_metrics_df = sharp_vol_metrics_df.loc[img_name]
+                plt.fill_between(
+                    sharp_vol_i_metrics_df.index,
+                    sharp_vol_i_metrics_df[f'{metric_name}_mean_low'],
+                    sharp_vol_i_metrics_df[f'{metric_name}_mean_high'],
+                    color=colors[i], alpha=.1
+                )
+
         plt.savefig(
-            os.path.join(output_dir_, f'Sharp volume {metric}: Performance for the kernel {kenel_name}.jpg'))
+            os.path.join(output_dir_, f'{fig_title}.jpg'))
         plt.close()
 
-        # Generate plots for the kernel estimates
-        kernel_metrics_df.mse.plot(figsize=(10, 5), logy=True, ylabel='mse',
-                                   title=f"Kernel MSE: Performance for the kernel {kenel_name}")
-        plt.vlines(x=mse_to_ssim_step, ymin=0, ymax=kernel_metrics_df.mse.max(), linestyle='--')
-        plt.savefig(os.path.join(output_dir_, f'Kernel MSE: Performance for the kernel {kenel_name}.jpg'))
-        plt.close()
+
+def plot_kernel_estimate_performance(kernel_metrics_df: pd.DataFrame, kernel_name: str, mse_to_ssim_step_: int,
+                                     output_dir_: str, metric_name: str, with_conf_interval: bool = False):
+    figure_name = f"Kernel {kernel_name} estimate: {metric_name} "
+    y_col = f'{metric_name}_mean' if with_conf_interval else metric_name
+    y_col_max = f'{metric_name}_mean_high' if with_conf_interval else metric_name
+
+    kernel_metrics_df[y_col].plot(figsize=(10, 5), logy=True, ylabel=metric_name, title=figure_name)
+    plt.vlines(x=mse_to_ssim_step_, ymin=0, ymax=kernel_metrics_df[y_col_max].max(), linestyle='--')
+
+    if with_conf_interval:
+        plt.fill_between(
+            kernel_metrics_df.index,
+            kernel_metrics_df[f'{metric_name}_mean_low'],
+            kernel_metrics_df[f'{metric_name}_mean_high'],
+            color='b', alpha=.1
+        )
+    plt.savefig(os.path.join(output_dir_, f'{figure_name}.jpg'))
+    plt.close()
+
+
+def concatenate_experiment_metrics(kernel_metrics_dictionary):
+
+    sharp_volume_estimation_metric_dfs = []
+    kernel_estimation_metric_dfs = []
+
+    for random_state_exp, metrics_dict in kernel_metrics_dictionary.items():
+        sharp_vol_metrics_df_i = pd.DataFrame(metrics_dict['sharp_volume_estimation'])
+        sharp_vol_metrics_df_i['exp'] = random_state_exp
+        sharp_vol_metrics_df_i = sharp_vol_metrics_df_i.set_index(['exp', 'image_name', 'step']).sort_index()
+
+        sharp_volume_estimation_metric_dfs.append(sharp_vol_metrics_df_i)
+
+        kernel_metrics_df_i = pd.DataFrame(metrics_dict['kernel_estimation'])
+        kernel_metrics_df_i['exp'] = random_state_exp
+        kernel_metrics_df_i = kernel_metrics_df_i.set_index(['exp', 'step']).sort_index()
+        kernel_estimation_metric_dfs.append(kernel_metrics_df_i)
+
+    sharp_volume_estimation_metric_df = pd.concat(sharp_volume_estimation_metric_dfs)
+    kernel_estimation_metric_df = pd.concat(kernel_estimation_metric_dfs)
+
+    # Calculate mean and standard deviation across experiments
+    sharp_volume_estimation_metric_df_per_volume = sharp_volume_estimation_metric_df.groupby(level=[1, 2]).agg(
+        [np.mean, np.std, lambda x: np.mean(x) - np.std(x), lambda x: np.mean(x) + np.std(x)]).rename(
+        columns={'<lambda_0>': 'mean_low', '<lambda_1>': 'mean_high'})
+    sharp_volume_estimation_metric_df_per_volume.columns = sharp_volume_estimation_metric_df_per_volume.columns \
+        .map('_'.join).str.strip('_')
+
+    sharp_volume_estimation_metric_df_agg = sharp_volume_estimation_metric_df.groupby(level=[2]).agg(
+        [np.mean, np.std, lambda x: np.mean(x) - np.std(x), lambda x: np.mean(x) + np.std(x)]).rename(
+        columns={'<lambda_0>': 'mean_low', '<lambda_1>': 'mean_high'})
+    sharp_volume_estimation_metric_df_agg.columns = sharp_volume_estimation_metric_df_agg.columns \
+        .map('_'.join).str.strip('_')
+
+    kernel_estimation_metric_df = kernel_estimation_metric_df.groupby(level=[1]).agg(
+        [np.mean, np.std, lambda x: np.mean(x) - np.std(x), lambda x: np.mean(x) + np.std(x)]).rename(
+        columns={'<lambda_0>': 'mean_low', '<lambda_1>': 'mean_high'})
+    kernel_estimation_metric_df.columns = kernel_estimation_metric_df.columns.map('_'.join) \
+        .str.strip('_')
+
+    return kernel_estimation_metric_df, sharp_volume_estimation_metric_df_per_volume,\
+        sharp_volume_estimation_metric_df_agg
+
+
+def plot_aggregated_volume_metrics(agg_baseline_df, sharp_volume_est_agg_df, output_dir_):
+
+    for metric_name in agg_baseline_df.columns:
+        fig_title = f'Sharp volume {metric_name}: Performance aggregated across volumes'
+        steps = sharp_volume_est_agg_df.index
+        baseline_values = np.array(
+            [agg_baseline_df.loc['mean', metric_name]] * sharp_volume_est_agg_df.shape[0])
+        baseline_std = agg_baseline_df.loc['std', metric_name]
+        fig, ax = plt.subplots()
+
+        # Plot baseline
+        ax.plot(steps, baseline_values, label='averaged baseline')
+        ax.fill_between(steps, (baseline_values - baseline_std), (baseline_values + baseline_std), color='b', alpha=.1)
+
+        # Plot estimate
+        estim_perf = sharp_volume_est_agg_df[f'{metric_name}_mean']
+        estim_perf_high = sharp_volume_est_agg_df[f'{metric_name}_mean_high']
+        estim_perf_low = sharp_volume_est_agg_df[f'{metric_name}_mean_low']
+
+        ax.plot(steps, estim_perf, label='W-3DIP averaged estimate')
+        ax.fill_between(steps, estim_perf_low, estim_perf_high, alpha=.1)
+
+        ax.set_title(fig_title)
+        ax.set_yscale('log')
+        ax.set_ylabel(metric_name)
+        ax.set_xlabel('steps')
+        plt.legend(loc="upper left")
+        plt.savefig(os.path.join(output_dir_, f'{fig_title}.jpg'))
+
+
+def record_agg_metrics_to_report(baseline_agg_df_, kernel_est_metric_df_):
+    # For sharp estimate of volumes
+    for metric_name in baseline_agg_df_.columns:
+        if metric_name in ['mse']:
+            best_score_idx = sharp_volume_est_metric_agg_df[f'{metric_name}_mean'].idxmin()
+        else:
+            best_score_idx = sharp_volume_est_metric_agg_df[f'{metric_name}_mean'].idxmax()
+
+        best_score = f'{sharp_volume_est_metric_agg_df[f"{metric_name}_mean"].loc[best_score_idx]: 0.4f} $\pm$ ' \
+                     f'{sharp_volume_est_metric_agg_df[f"{metric_name}_std"].loc[best_score_idx]: 0.4f}'
+        last_score = f'{sharp_volume_est_metric_agg_df.iloc[-1][f"{metric_name}_mean"]: 0.4f} $\pm$ ' \
+                     f'{sharp_volume_est_metric_agg_df.iloc[-1][f"{metric_name}_std"]: 0.4f}'
+        baseline_socre = f'{baseline_agg_df_.loc["mean", metric_name]: 0.4f} $\pm$ ' \
+                         f'{baseline_agg_df_.loc["std", metric_name]: 0.4f}'
+
+        metrics_to_report[metric_name][blurring_kernel_name] = {
+            'best_score': best_score, 'last_score': last_score, 'baseline_score': baseline_socre}
+    # For mse of kernel
+    best_kernel_mse_idx = kernel_est_metric_df_.mse_mean.idxmin()
+    best_kernel_mse = f'{kernel_est_metric_df_.loc[best_kernel_mse_idx, "mse_mean"]: 0.4f} $\pm$ ' \
+                      f'{kernel_est_metric_df_.loc[best_kernel_mse_idx, "mse_std"]: 0.4f}'
+    last_kernel_mse = f'{kernel_est_metric_df_.iloc[-1]["mse_mean"]: 0.4f} $\pm$ ' \
+                      f'{kernel_est_metric_df_.iloc[-1]["mse_std"]: 0.4f}'
+    metrics_to_report['kernel_mse'][blurring_kernel_name] = {
+        'best_score': best_kernel_mse, 'last_score': last_kernel_mse}
 
 
 if __name__ == '__main__':
@@ -115,6 +260,7 @@ if __name__ == '__main__':
     )
 
     metrics = {}
+    metrics_to_report = {}
     for ground_truth_volume_names, ground_truth_volumes, blurring_kernel_name, blurr_kernel, blurred_volumes in dataset:
         metrics[blurring_kernel_name] = {}
 
@@ -153,7 +299,7 @@ if __name__ == '__main__':
             random_state = random.randint(0, 1000)
             set_seed(random_state)
 
-            checkpoint_volumes = repetition_i == 0 # Only store volumes of the first iteration
+            checkpoint_volumes = repetition_i == 0
             exp_output_dir = os.path.join(kernel_output_dir, f'seed_{random_state}')
             os.makedirs(exp_output_dir, exist_ok=True)
 
@@ -198,52 +344,64 @@ if __name__ == '__main__':
                 checkpoint_volumes=checkpoint_volumes
             )
 
+            # Metric reporting
+            if repetition_i == 0:
+                metrics[blurring_kernel_name]['baseline'] = trainer.baseline_blurr_to_gt_metrics
+
+            # Initialize keys of metrics to report
+            if len(metrics_to_report) == 0:
+                for metric_name in list(trainer.baseline_blurr_to_gt_metrics.keys() - {'image_name'}):
+                    metrics_to_report[metric_name] = {}
+
+                metrics_to_report['kernel_mse'] = {}
+
             metrics[blurring_kernel_name][f'seed_{random_state}'] = {
                     'sharp_volume_estimation': trainer.image_estimate_metrics,
                     'kernel_estimation': trainer.kernel_estimate_metrics,
-                    'baseline': trainer.baseline_blurr_to_gt_metrics
             }
 
             plot_figures_store_metrics_per_experiment(
                 metrics[blurring_kernel_name][f'seed_{random_state}'],
+                metrics[blurring_kernel_name]['baseline'],
                 exp_output_dir,
-                blurring_kernel_name
+                blurring_kernel_name,
+                mse_to_ssim_step_=mse_to_ssim_step
             )
 
-        # TODO: Aggregate result accross seeds for each kernel
-        print("hallo")
-        print('do something with metrics')
-
         # Concatenate results across experiments with different seeds
-        sharp_volume_estimation_metric_dfs = []
-        kernel_estimation_metric_dfs = []
-        for random_state_exp, metrics_dict in metrics[blurring_kernel_name].items():
-            sharp_vol_metrics_df_i = pd.DataFrame(metrics_dict['sharp_volume_estimation'])
-            sharp_vol_metrics_df_i['exp'] = random_state_exp
-            sharp_vol_metrics_df_i = sharp_vol_metrics_df_i.set_index(['exp', 'image_name', 'step']).sort_index()
+        kernel_est_metric_df, sharp_vol_est_metric_df_per_vol, sharp_volume_est_metric_agg_df =\
+            concatenate_experiment_metrics(
+                {k: v for k, v in metrics[blurring_kernel_name].items() if 'baseline' not in k})
 
-            sharp_volume_estimation_metric_dfs.append(sharp_vol_metrics_df_i)
+        # Plot average kernel performance
+        plot_kernel_estimate_performance(
+            kernel_name=blurring_kernel_name, kernel_metrics_df=kernel_est_metric_df,
+            mse_to_ssim_step_=mse_to_ssim_step, output_dir_=kernel_output_dir, metric_name='mse',
+            with_conf_interval=True
+        )
 
-            kernel_metrics_df_i = pd.DataFrame(metrics_dict['kernel_estimation'])
-            kernel_metrics_df_i['exp'] = random_state_exp
-            kernel_metrics_df_i = kernel_metrics_df_i.set_index(['exp', 'step']).sort_index()
-            kernel_estimation_metric_dfs.append(kernel_metrics_df_i)
+        # Plot average sharp volume performance per volume
+        baseline_df = pd.DataFrame(metrics[blurring_kernel_name]['baseline']).set_index('image_name').sort_index()
+        plot_volume_performance_per_metric(
+            baseline_df=baseline_df,
+            sharp_vol_metrics_df=sharp_vol_est_metric_df_per_vol,
+            kenel_name=blurring_kernel_name,
+            output_dir_=kernel_output_dir,
+            with_conf_interval=True
+        )
 
-        sharp_volume_estimation_metric_df = pd.concat(sharp_volume_estimation_metric_dfs)
-        kernel_estimation_metric_df = pd.concat(kernel_estimation_metric_dfs)
+        # Plot average sharp volume performance across volumes
+        baseline_agg_df = baseline_df.agg([np.mean, np.std])
+        plot_aggregated_volume_metrics(baseline_agg_df, sharp_volume_est_metric_agg_df, output_dir_=kernel_output_dir)
 
-        # Calculate mean and standard deviation across experiments
-        sharp_volume_estimation_metric_df = sharp_volume_estimation_metric_df.groupby(level=[1, 2]).agg(
-            [np.mean, np.std, lambda x: np.mean(x) - np.std(x), lambda x: np.mean(x) + np.std(x)]).rename(
-            columns={'<lambda_0>': 'mean_low', '<lambda_1>': 'mean_high'})
-        sharp_volume_estimation_metric_df.columns = sharp_volume_estimation_metric_df.columns.map('_'.join)\
-            .str.strip('_')
+        record_agg_metrics_to_report(baseline_agg_df, kernel_est_metric_df)
 
-        kernel_estimation_metric_df = kernel_estimation_metric_df.groupby(level=[1]).agg(
-            [np.mean, np.std, lambda x: np.mean(x) - np.std(x), lambda x: np.mean(x) + np.std(x)]).rename(
-            columns={'<lambda_0>': 'mean_low', '<lambda_1>': 'mean_high'})
-        kernel_estimation_metric_df.columns = kernel_estimation_metric_df.columns.map('_'.join)\
-            .str.strip('_')
+    # Store aggregated metrics as markdown tables
+    for metric_name in metrics_to_report.keys():
+        f = open(os.path.join(ground_truth_output_dir, f'{metric_name}.md'), "w")
+        table_i = pd.DataFrame(metrics_to_report[metric_name]).to_markdown()
+        f.write(table_i)
+        f.close()
 
     # Store all metrics calculated
     json.dump(metrics, open(os.path.join(ground_truth_output_dir, 'exp_metrics.json'), 'w'), indent=4)
